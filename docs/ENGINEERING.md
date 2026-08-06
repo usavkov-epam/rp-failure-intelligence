@@ -77,6 +77,8 @@ flowchart LR
 | `src/lib/analytics.ts` | Domain logic | Convert ReportPortal history into rows, trends, metrics, and risk categories |
 | `src/lib/types.ts` | Internal contracts | Dashboard DTOs, ReportPortal response shapes, report selection types |
 | `src/components/Dashboard.tsx` | Client UI | Selectors, filters, DataGrid, links, metrics, empty states, and error toasts |
+| `src/components/RunsView.tsx` | Client UI | Durable run list, Realtime subscription, result links, and completion toasts |
+| `src/components/AppHeader.tsx` | Shared navigation | Analysis/runs navigation, refresh, source state, and sign-out controls |
 | `src/types` | Framework augmentation | Auth.js session and JWT type extensions |
 
 ### Request flow
@@ -136,6 +138,8 @@ sequenceDiagram
 The workflow `run-name` embeds the server-generated request UUID. The webhook validates `X-Hub-Signature-256`, repository, workflow path, and UUID before updating an existing row. The `cypress_runs` table has RLS enabled with no browser policies, so only server routes using the service role can read or mutate rows. Authenticated list requests are scoped case-insensitively to the session's GitHub login.
 
 Realtime uses a public Supabase Broadcast channel whose name is an HMAC of the GitHub login and `AUTH_SECRET`. Events contain only the opaque request UUID. Receiving an event authorizes nothing; it tells the browser to make one normal authenticated `/api/runs` request. This avoids polling while keeping run data behind Auth.js authorization.
+
+The Analysis page owns failure selection and workflow dispatch. The authenticated `/runs` page owns run history and Realtime status updates, keeping test execution monitoring separate from ReportPortal analysis.
 
 ## Authentication and Authorization
 

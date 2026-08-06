@@ -1,11 +1,8 @@
 "use client";
 
-import { useDeferredValue, useEffect, useRef, useState } from "react";
-import { signOut } from "next-auth/react";
-import { createClient } from "@supabase/supabase-js";
+import { useDeferredValue, useRef, useState } from "react";
 import {
   Alert,
-  AppBar,
   Box,
   Button,
   Chip,
@@ -28,61 +25,15 @@ import {
   ThemeProvider,
   Tooltip,
   Typography,
-  createTheme,
 } from "@mui/material";
 import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
-import CheckCircleOutlineRounded from "@mui/icons-material/CheckCircleOutlineRounded";
-import ErrorOutlineRounded from "@mui/icons-material/ErrorOutlineRounded";
 import LaunchRounded from "@mui/icons-material/LaunchRounded";
-import PendingRounded from "@mui/icons-material/PendingRounded";
-import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import PlayArrowRounded from "@mui/icons-material/PlayArrowRounded";
 import ScienceRounded from "@mui/icons-material/ScienceRounded";
 import { DataGrid, type GridColDef, type GridRowSelectionModel } from "@mui/x-data-grid";
-import type { CypressRunRecord, DashboardData, FailureRow, ReportSelection, ReportSourceOptions, Risk } from "@/lib/types";
-
-function formatRunDuration(run: CypressRunRecord) {
-  if (!run.startedAt) return "Waiting to start";
-  const end = run.status === "completed" && run.updatedAt ? Date.parse(run.updatedAt) : Date.now();
-  const seconds = Math.max(0, Math.round((end - Date.parse(run.startedAt)) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
-function runColor(run: CypressRunRecord): "default" | "info" | "success" | "error" | "warning" {
-  if (run.status !== "completed") return run.status === "in_progress" ? "info" : "default";
-  if (run.conclusion === "success") return "success";
-  if (run.conclusion === "failure") return "error";
-  return "warning";
-}
-
-function runIcon(run: CypressRunRecord) {
-  if (run.status !== "completed") return <PendingRounded fontSize="small" />;
-  return run.conclusion === "success"
-    ? <CheckCircleOutlineRounded fontSize="small" />
-    : <ErrorOutlineRounded fontSize="small" />;
-}
-
-const theme = createTheme({
-  palette: {
-    mode: "light",
-    primary: { main: "#175b52" },
-    secondary: { main: "#b44a35" },
-    background: { default: "#f3f1eb", paper: "#fffefb" },
-    text: { primary: "#17211f", secondary: "#5e6b67" },
-  },
-  shape: { borderRadius: 6 },
-  typography: {
-    fontFamily: '"Avenir Next", "Trebuchet MS", sans-serif',
-    h1: { fontFamily: 'Georgia, "Times New Roman", serif', fontWeight: 500, letterSpacing: 0 },
-    h2: { fontFamily: 'Georgia, "Times New Roman", serif', fontWeight: 500, letterSpacing: 0 },
-    button: { textTransform: "none", fontWeight: 700, letterSpacing: 0 },
-  },
-  components: {
-    MuiPaper: { styleOverrides: { root: { backgroundImage: "none" } } },
-    MuiButton: { defaultProps: { disableElevation: true } },
-  },
-});
+import type { DashboardData, FailureRow, ReportSelection, ReportSourceOptions, Risk } from "@/lib/types";
+import AppHeader from "./AppHeader";
+import { appTheme } from "./app-theme";
 
 const riskColors: Record<Risk, "error" | "warning" | "info" | "success"> = {
   Persistent: "error",
@@ -170,9 +121,6 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
   const [runPending, setRunPending] = useState(false);
   const [runError, setRunError] = useState("");
   const [runResult, setRunResult] = useState<{ requestId: string; actionsUrl: string } | null>(null);
-  const [runHistory, setRunHistory] = useState<CypressRunRecord[]>([]);
-  const [runStatusError, setRunStatusError] = useState("");
-  const [completionNotice, setCompletionNotice] = useState<CypressRunRecord | null>(null);
   const [runOptions, setRunOptions] = useState({ runs: 5, threads: 1, browser: "chrome", timeoutSeconds: 600 });
   const reportFormRef = useRef<HTMLFormElement>(null);
   const deferredSearch = useDeferredValue(search.toLowerCase());
@@ -188,59 +136,6 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
   const selectedSpecs = [...new Set(initialData.rows
     .filter((row) => selected.ids.has(row.id))
     .map((row) => row.specPath))];
-
-  useEffect(() => {
-    let active = true;
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const supabase = supabaseUrl && supabaseAnonKey
-      ? createClient(supabaseUrl, supabaseAnonKey, { auth: { autoRefreshToken: false, persistSession: false } })
-      : null;
-    let channel: ReturnType<NonNullable<typeof supabase>["channel"]> | null = null;
-
-    const loadRuns = async (notifyRequestId?: string) => {
-      try {
-        const response = await fetch("/api/runs", { cache: "no-store" });
-        const result = await response.json() as { runs?: CypressRunRecord[]; channel?: string; error?: string };
-        if (!response.ok || !result.runs || !result.channel) throw new Error(result.error || "Unable to load Cypress runs");
-        if (!active) return null;
-        setRunHistory(result.runs);
-        setRunStatusError("");
-        if (notifyRequestId) {
-          const completedRun = result.runs.find((run) => run.requestId === notifyRequestId && run.status === "completed");
-          if (completedRun) setCompletionNotice(completedRun);
-        }
-        return result.channel;
-      } catch (error) {
-        if (active) setRunStatusError(error instanceof Error ? error.message : "Unable to load Cypress runs");
-        return null;
-      }
-    };
-
-    const connect = async () => {
-      const channelName = await loadRuns();
-      if (!active || !channelName) return;
-      if (!supabase) {
-        setRunStatusError("Realtime run notifications are not configured");
-        return;
-      }
-      channel = supabase.channel(channelName)
-        .on("broadcast", { event: "cypress_run_changed" }, ({ payload }) => {
-          void loadRuns(typeof payload?.requestId === "string" ? payload.requestId : undefined);
-        })
-        .subscribe((status) => {
-          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-            setRunStatusError("Realtime run notifications are unavailable");
-          }
-        });
-    };
-
-    void connect();
-    return () => {
-      active = false;
-      if (channel && supabase) void supabase.removeChannel(channel);
-    };
-  }, []);
 
   const columns: GridColDef<FailureRow>[] = [
     { field: "risk", headerName: "Risk", width: 125, renderCell: ({ value }) => <Chip size="small" label={value} color={riskColors[value as Risk]} variant="outlined" /> },
@@ -260,14 +155,9 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
   ];
 
   return (
-    <ThemeProvider theme={theme}>
+    <ThemeProvider theme={appTheme}>
       <CssBaseline />
-      <AppBar position="sticky" color="inherit" elevation={0} sx={{ borderBottom: 1, borderColor: "divider" }}>
-        <Container maxWidth={false} sx={{ py: 1.25, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 2 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}><Box sx={{ width: 28, height: 28, bgcolor: "secondary.main", display: "grid", placeItems: "center", color: "white", fontWeight: 900 }}>RP</Box><Typography sx={{ fontWeight: 800 }}>Failure intelligence</Typography></Stack>
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}><Chip size="small" color={initialData.meta.source === "live" ? "success" : "error"} label={initialData.meta.source === "live" ? "Live data" : "Load error"} /><Button size="small" startIcon={<RefreshRounded />} onClick={() => location.reload()}>Refresh</Button><Button size="small" onClick={() => signOut({ redirectTo: "/signin" })}>{user.name} · Sign out</Button></Stack>
-        </Container>
-      </AppBar>
+      <AppHeader currentPage="analysis" userName={user.name} sourceStatus={initialData.meta.source} />
       <Box component="main" sx={{ pb: 7 }}>
         <Box sx={{ borderBottom: 1, borderColor: "divider", background: "linear-gradient(115deg, #eef4f0 0%, #f3f1eb 55%, #f5e7df 100%)" }}>
           <Container maxWidth={false} sx={{ py: { xs: 3, md: 5 } }}>
@@ -372,36 +262,6 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
               Run selected
             </Button>
           </Stack>
-          {runHistory.length > 0 && (
-            <Paper variant="outlined" sx={{ mb: 2.5, overflow: "hidden" }}>
-              <Stack direction="row" sx={{ px: 2, py: 1.5, alignItems: "center", justifyContent: "space-between", borderBottom: 1, borderColor: "divider" }}>
-                <Box>
-                  <Typography variant="h6">Recent Cypress runs</Typography>
-                  <Typography variant="caption" color="text.secondary">Latest runs started by your GitHub account</Typography>
-                </Box>
-              </Stack>
-              {runStatusError && <Alert severity="warning" square>{runStatusError}</Alert>}
-              <Stack divider={<Box sx={{ borderTop: 1, borderColor: "divider" }} />}>
-                {runHistory.map((run) => (
-                  <Box key={run.requestId} sx={{ px: 2, py: 1.5, display: "grid", gridTemplateColumns: { xs: "1fr", md: "minmax(180px, .8fr) minmax(280px, 1.8fr) minmax(210px, 1fr) auto" }, gap: 1.5, alignItems: "center" }}>
-                    <Box>
-                      <Chip size="small" icon={runIcon(run)} color={runColor(run)} label={run.status === "completed" ? run.conclusion || "completed" : run.status.replace("_", " ")} />
-                      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5, fontFamily: "monospace" }}>{run.requestId.slice(0, 8)}{run.runNumber ? ` · #${run.runNumber}` : ""}</Typography>
-                    </Box>
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 700 }}>{run.specs.length} {run.specs.length === 1 ? "spec" : "specs"} · {run.runs} {run.runs === 1 ? "run" : "runs"} each</Typography>
-                      <Typography variant="caption" color="text.secondary" sx={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={run.specs.join("\n")}>{run.specs.join(", ")}</Typography>
-                    </Box>
-                    <Box>
-                      <Typography variant="body2">{run.browser} · {run.threads} {run.threads === 1 ? "thread" : "threads"} · {formatRunDuration(run)}</Typography>
-                      <Typography variant="caption" color="text.secondary">{run.artifactCount ? `${run.artifactCount} result artifact${run.artifactCount === 1 ? "" : "s"}` : run.status === "completed" ? "No artifacts" : "Results pending"}</Typography>
-                    </Box>
-                    <Button size="small" endIcon={<LaunchRounded />} component={Link} href={run.actionsUrl} target="_blank" rel="noreferrer">Actions</Button>
-                  </Box>
-                ))}
-              </Stack>
-            </Paper>
-          )}
           <Paper variant="outlined" sx={{ height: 690, width: "100%" }}>
             <DataGrid rows={rows} columns={columns} checkboxSelection disableRowSelectionOnClick rowSelectionModel={selected} onRowSelectionModelChange={setSelected} rowHeight={76} pageSizeOptions={[10, 25, 50]} localeText={{ noRowsLabel: "No data" }} initialState={{ pagination: { paginationModel: { pageSize: 10 } }, sorting: { sortModel: [{ field: "failureRate", sort: "desc" }] } }} sx={{ border: 0, "& .MuiDataGrid-columnHeaderTitle": { fontWeight: 800 }, "& .MuiDataGrid-cell": { alignItems: "center" } }} />
           </Paper>
@@ -443,10 +303,9 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ specs: selectedSpecs, ...runOptions }),
                 });
-                const result = await response.json() as { requestId: string; actionsUrl: string; run: CypressRunRecord; error?: string };
+                const result = await response.json() as { requestId: string; actionsUrl: string; error?: string };
                 if (!response.ok) throw new Error(result.error || "Unable to start Cypress run");
                 setRunResult(result);
-                setRunHistory((current) => [result.run, ...current.filter((run) => run.requestId !== result.requestId)].slice(0, 20));
                 setRunDialogOpen(false);
               } catch (error) {
                 setRunError(error instanceof Error ? error.message : "Unable to start Cypress run");
@@ -460,13 +319,8 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
         </DialogActions>
       </Dialog>
       <Snackbar open={Boolean(runResult)} autoHideDuration={12000} onClose={() => setRunResult(null)} anchorOrigin={{ vertical: "bottom", horizontal: "right" }}>
-        <Alert severity="success" variant="filled" action={<Button color="inherit" size="small" component={Link} href={runResult?.actionsUrl || "#"} target="_blank">Open Actions</Button>}>
+        <Alert severity="success" variant="filled" action={<Button color="inherit" size="small" component={Link} href="/runs">View runs</Button>}>
           Cypress run queued. Request {runResult?.requestId.slice(0, 8)}
-        </Alert>
-      </Snackbar>
-      <Snackbar open={Boolean(completionNotice)} autoHideDuration={15000} onClose={() => setCompletionNotice(null)} anchorOrigin={{ vertical: "bottom", horizontal: "right" }}>
-        <Alert severity={completionNotice?.conclusion === "success" ? "success" : "error"} variant="filled" action={<Button color="inherit" size="small" component={Link} href={completionNotice?.actionsUrl || "#"} target="_blank">View results</Button>}>
-          Cypress run {completionNotice?.requestId.slice(0, 8)} {completionNotice?.conclusion || "completed"}.
         </Alert>
       </Snackbar>
       <Snackbar open={Boolean(initialData.meta.error)} autoHideDuration={8000} anchorOrigin={{ vertical: "bottom", horizontal: "right" }}>

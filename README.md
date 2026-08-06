@@ -62,7 +62,7 @@ Both allowlists are comma-separated. The allowlist selected by the active mode m
 
 Select one or more failure rows and choose **Run selected**. The dashboard accepts 1–25 unique `cypress/e2e/**/*.cy.js` or `.cy.ts` paths and allows bounded repetition, concurrency, browser, and timeout settings. It dispatches `.github/workflows/cypress-selected-specs.yml`, which checks out `folio-org/stripes-testing`, runs its existing `cypress:repeat` command, and uploads logs, summaries, Allure results, screenshots, and videos for 14 days.
 
-The **Recent Cypress runs** panel loads the authenticated GitHub user's latest runs from Supabase. GitHub sends signed `workflow_run` webhooks when a run is requested, starts, or completes. The webhook updates the durable row and publishes an opaque Supabase Realtime Broadcast; subscribed browsers then reload the authenticated run list once and show a completion toast. There is no timer polling. The panel displays state, conclusion, duration, selected specs, runner settings, and artifact availability. Use **Actions** to inspect logs and download artifacts.
+The authenticated **Runs** page at `/runs` loads the GitHub user's latest runs from Supabase. GitHub sends signed `workflow_run` webhooks when a run is requested, starts, or completes. The webhook updates the durable row and publishes an opaque Supabase Realtime Broadcast; the open Runs page then reloads the authenticated list once and shows a completion toast. There is no timer polling. The page displays state, conclusion, duration, selected specs, runner settings, and artifact availability. Use **Actions** to inspect logs and download artifacts.
 
 Configure these server-only values for the dashboard:
 
