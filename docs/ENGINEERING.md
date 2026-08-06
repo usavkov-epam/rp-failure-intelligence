@@ -4,7 +4,7 @@
 
 Failure Intelligence is an authenticated, read-only analytics application for investigating failed automated tests stored in ReportPortal. It helps an authorized user select a ReportPortal project, launch name, specific completed run, team, and history depth; inspect failure patterns; and open the corresponding Cypress source, ReportPortal log, or TestRail case.
 
-ReportPortal is the source of truth. The application has no database and contains no bundled report or fallback test data.
+ReportPortal is the source of truth for failure data and analytics. Supabase persists only Cypress workflow run metadata and provides Realtime notifications. The application contains no bundled report or fallback test data.
 
 ## Product Boundaries
 
@@ -16,14 +16,14 @@ The application:
 - Creates read-only links to a configured GitHub source repository.
 - Optionally creates TestRail links from test case identifiers.
 - Dispatches explicitly selected Cypress specs to a bounded GitHub Actions workflow.
-- Tracks dispatched workflow status, conclusion, duration, and artifact availability through the GitHub Actions API.
-- Deploys as a Next.js application through OpenNext on Cloudflare Workers.
+- Tracks dispatched workflow status, conclusion, duration, and artifact availability through signed GitHub webhooks, Supabase, and the GitHub Actions artifact API.
+- Deploys as a Next.js application on Vercel.
 
 The application does not:
 
 - Run Cypress tests inside the dashboard or Vercel runtime.
 - Modify the configured source repository.
-- Store reports, user profiles, or credentials in an application database.
+- Store ReportPortal reports, user profiles, OAuth tokens, or test credentials in Supabase.
 - Show bundled, synthetic, cached, or cross-launch fallback report data.
 - Allow unauthenticated local development access.
 
@@ -59,9 +59,13 @@ flowchart LR
   Next -->|OAuth and optional membership API| GitHubAuth[GitHub OAuth/API]
   Next -->|Bearer API token| RP[ReportPortal]
   Next -->|Analyzed DTO| Browser
+  Next -->|workflow_dispatch and artifact lookup| Actions[GitHub Actions]
+  Actions -->|Signed workflow_run webhook| Next
+  Next -->|Service role: run metadata and broadcast| Supabase[Supabase Postgres and Realtime]
+  Supabase -->|Opaque Broadcast event| Browser
   Browser -->|Read-only source link| GitHubRepo[GitHub source repository]
   Browser -->|Case link| TestRail[TestRail]
-  Next -->|OpenNext adapter| CF[Cloudflare Worker]
+  Next -->|Production runtime| Vercel[Vercel]
 ```
 
 ### Runtime layers
@@ -72,13 +76,17 @@ flowchart LR
 | `src/auth.ts` | Identity and authorization | GitHub OAuth, mode-specific authorization, JWT/session shaping |
 | `src/lib/config.ts` | Configuration boundary | Server-side environment validation and normalized configuration |
 | `src/lib/reportportal.ts` | Integration boundary | ReportPortal discovery, launch resolution, item/history loading, explicit empty/error outcomes |
-| `src/lib/cypress-runs.ts` | Execution boundary | Authenticated GitHub Actions workflow dispatch, status lookup, and artifact discovery |
+| `src/lib/cypress-runs.ts` | Execution boundary | Authenticated GitHub Actions workflow dispatch and completed-run artifact discovery |
+| `src/lib/cypress-run-store.ts` | Persistence boundary | Service-role run storage, user-scoped listing, updates, HMAC channel names, and Broadcast publishing |
 | `src/lib/cypress-run-request.ts` | Validation boundary | Selected spec paths and bounded runner settings |
 | `src/lib/analytics.ts` | Domain logic | Convert ReportPortal history into rows, trends, metrics, and risk categories |
 | `src/lib/types.ts` | Internal contracts | Dashboard DTOs, ReportPortal response shapes, report selection types |
 | `src/components/Dashboard.tsx` | Client UI | Selectors, filters, DataGrid, links, metrics, empty states, and error toasts |
 | `src/components/RunsView.tsx` | Client UI | Durable run list, Realtime subscription, result links, and completion toasts |
 | `src/components/AppHeader.tsx` | Shared navigation | Analysis/runs navigation, refresh, source state, and sign-out controls |
+| `src/app/api/runs/route.ts` | Authenticated run API | User-scoped run listing and validated workflow dispatch |
+| `src/app/api/webhooks/github/route.ts` | Webhook boundary | HMAC, repository, workflow, and request-ID validation; run updates and broadcasts |
+| `supabase/migrations` | Database schema | Server-managed `cypress_runs` table, constraints, index, and RLS |
 | `src/types` | Framework augmentation | Auth.js session and JWT type extensions |
 
 ### Request flow
@@ -140,6 +148,8 @@ The workflow `run-name` embeds the server-generated request UUID. The webhook va
 Realtime uses a public Supabase Broadcast channel whose name is an HMAC of the GitHub login and `AUTH_SECRET`. Events contain only the opaque request UUID. Receiving an event authorizes nothing; it tells the browser to make one normal authenticated `/api/runs` request. This avoids polling while keeping run data behind Auth.js authorization.
 
 The Analysis page owns failure selection and workflow dispatch. The authenticated `/runs` page owns run history and Realtime status updates, keeping test execution monitoring separate from ReportPortal analysis.
+
+`listCypressRuns()` returns the 20 newest rows for the authenticated GitHub login. Rows remain durable beyond that display window. The app does not poll GitHub or Supabase on a timer.
 
 ## Authentication and Authorization
 
@@ -234,9 +244,9 @@ All secrets are server-only. No secret may use a `NEXT_PUBLIC_` prefix.
 | `GITHUB_ACTIONS_WORKFLOW` | No | No | Selected-spec workflow filename |
 | `GITHUB_ACTIONS_REF` | No | No | Workflow ref |
 | `GITHUB_WEBHOOK_SECRET` | For run updates | Yes | Verifies GitHub `workflow_run` HMAC signatures |
-| `NEXT_PUBLIC_SUPABASE_URL` | For run history | No | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | For Realtime | No | Public key used only to subscribe to opaque broadcast channels |
-| `SUPABASE_SERVICE_ROLE_KEY` | For run history | Yes | Server-only database and broadcast access |
+| `NEXT_PUBLIC_SUPABASE_URL` | With run tracking | No | Supabase project URL; required with the other two Supabase values |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | With run tracking | No | Public key used only for opaque Broadcast subscriptions; required with the other two Supabase values |
+| `SUPABASE_SERVICE_ROLE_KEY` | With run tracking | Yes | Server-only database and broadcast access; required with the other two Supabase values |
 | `AUTH_TRUST_HOST` | Deployment-dependent | No | Auth.js trusted-host behavior |
 | `RP_API_URL` | For live data | No | ReportPortal API v1 base URL |
 | `RP_API_KEY` | For live data | Yes | Read-only ReportPortal API token |
@@ -247,6 +257,8 @@ All secrets are server-only. No secret may use a `NEXT_PUBLIC_` prefix.
 
 Some legacy integration variables may remain in local environments, but application code must not imply support unless the variable is validated and consumed by `src/lib/config.ts`.
 
+The three Supabase values are optional only as a group: if any one is present, configuration validation requires all three. The `/runs` page and dispatch API require the group to be configured. Never expose the service-role key to client code.
+
 ## Local Development
 
 Requirements:
@@ -256,6 +268,7 @@ Requirements:
 - A local GitHub OAuth App configured for port 8080.
 - Membership in an allowed organization or a login in the configured static-user allowlist.
 - ReportPortal credentials for live reports.
+- Supabase configuration, a GitHub Actions token, and a webhook secret when developing Cypress dispatch and run tracking.
 
 ```bash
 corepack enable
@@ -314,7 +327,7 @@ Override the script explicitly only for a deliberate alternate OAuth App configu
 
 ### Security
 
-- Never log, serialize, or expose OAuth, ReportPortal, Jira, or TestRail secrets.
+- Never log, serialize, or expose OAuth, ReportPortal, GitHub Actions, webhook, or Supabase service-role secrets.
 - Never route credentials through client props or browser storage.
 - Validate selected specs as repository-relative Cypress paths and bound spec count, repetitions, threads, browser, and timeout before dispatch.
 - Keep `GITHUB_ACTIONS_TOKEN` server-only and keep the Base64-encoded Cypress environment in the GitHub repository secret `STRIPES_TESTING_ENVIRONMENTS_B64`.
@@ -332,7 +345,7 @@ Run the complete repository check before merging:
 pnpm check
 ```
 
-It currently runs ESLint, legacy script syntax checks, and a production Next.js build.
+It currently runs nine Vitest tests in two files, ESLint, legacy script syntax checks, and a production Next.js build.
 
 For behavior changes, also validate the smallest relevant path:
 
@@ -342,21 +355,24 @@ For behavior changes, also validate the smallest relevant path:
 - Empty data: a valid empty response shows `No data` and no error toast.
 - Error data: an API failure shows an error toast and no rows.
 - Source links: generated URLs use the configured owner, repository, and ref.
+- Cypress request validation: duplicate specs are deduplicated and all counts, paths, browsers, and timeouts remain within server and workflow bounds.
+- Run tracking: `/api/runs` is authenticated and user-scoped; a valid signed webhook updates the matching row and causes one authenticated refresh on `/runs`.
 
-Automated tests are not yet established. New tests should prioritize pure analytics unit tests, ReportPortal client contract tests with mocked fetch responses, auth callback tests, and browser tests for the states above.
+Existing Vitest coverage exercises analytics and Cypress run-request validation. New tests should prioritize ReportPortal client contracts with mocked fetch responses, Auth.js authorization, the run API, webhook signature/filter behavior, Supabase repository failures, and browser states above.
 
 ## Deployment
 
-Production deployment uses OpenNext and Cloudflare Workers:
+Production deployment uses Vercel:
 
 1. Configure a production GitHub OAuth App with the deployed HTTPS origin and callback.
-2. Store authentication and ReportPortal secrets with Wrangler secrets.
-3. Configure non-secret variables in Worker configuration or deployment environment.
-4. Run `pnpm check`.
-5. Run `pnpm deploy`.
-6. Verify sign-in, organization rejection, ReportPortal access, empty/error states, and source links in the deployed environment.
+2. Configure secrets and non-secret variables from `.env.example` in the Vercel project.
+3. Apply `supabase/migrations` to the linked Supabase project.
+4. Configure the repository's `workflow_run` webhook and `STRIPES_TESTING_ENVIRONMENTS_B64` Actions secret.
+5. Run `pnpm check`.
+6. Deploy with `pnpm dlx vercel@latest --prod`.
+7. Verify sign-in, authorization rejection, ReportPortal live/empty/error states, source links, dispatch, `/runs`, webhook updates, and artifact links.
 
-Cloudflare does not provide an application database for this project because none is required. Auth.js uses encrypted JWT sessions.
+The current production alias is `https://rp-failure-intelligence.vercel.app`. Auth.js uses encrypted JWT sessions; Supabase stores only Cypress run metadata. OpenNext configuration remains available for evaluation but is not the production path.
 
 ## Known Limitations and Next Work
 
@@ -364,15 +380,16 @@ Current known limitations:
 
 - Team is currently free text rather than a server-discovered selection.
 - ReportPortal page traversal is not yet generalized across all endpoints.
-- Automated tests are not yet present.
+- Automated coverage does not yet include integration routes, authentication, webhooks, Supabase, or browser workflows.
+- The Runs page displays only the 20 most recent records per authenticated user and does not provide in-app artifact downloads.
 - The dashboard component contains several compact inline render blocks that may merit extraction as behavior grows.
 
 Recommended order of work:
 
 1. Discover valid teams for the selected launch and replace the team text field with a selection.
 2. Implement complete pagination for discovery, items, failures, and history.
-3. Add focused automated tests for authentication, integration outcomes, and analytics.
-4. Validate and deploy through Cloudflare Workers.
+3. Add focused automated tests for authentication, ReportPortal contracts, run APIs, webhook filtering, and Supabase failures.
+4. Add browser coverage for analysis, dispatch, Realtime updates, and the Runs page.
 
 ## Architecture Decision Checklist
 
@@ -380,7 +397,7 @@ Before adding a feature, verify:
 
 - Does it preserve mandatory GitHub authorization?
 - Does it keep secrets server-side?
-- Is ReportPortal still the source of truth?
+- Is ReportPortal still the source of truth for failure analytics, with Supabase limited to run metadata?
 - Does it avoid writing to or executing code in the source repository?
 - Are empty and error outcomes represented honestly?
 - Is user input validated at the server boundary?

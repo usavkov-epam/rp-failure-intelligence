@@ -1,6 +1,6 @@
 # Failure Intelligence
 
-An organization-agnostic ReportPortal analytics dashboard that links failures to their Cypress test sources. It uses no application database: Auth.js stores encrypted JWT sessions and ReportPortal remains the source of truth for failure history.
+An organization-agnostic ReportPortal analytics dashboard that links failures to their Cypress test sources and dispatches selected specs to GitHub Actions. ReportPortal remains the source of truth for failure analytics; Supabase stores only durable Cypress run metadata and provides Realtime notifications. Auth.js stores encrypted JWT sessions.
 
 For architecture, use cases, security boundaries, code conventions, data flows, and contribution guidance, see [Engineering Guide](docs/ENGINEERING.md).
 
@@ -13,7 +13,8 @@ The included `.env.example` demonstrates read-only source links to `folio-org/st
 - Auth.js GitHub OAuth with selectable organization-membership or static-user authorization
 - Read-only links from ReportPortal failures to source specs in GitHub
 - Authenticated dispatch of selected Cypress specs to GitHub Actions
-- OpenNext deployment to Cloudflare Workers Free
+- Supabase Postgres and Realtime for durable, webhook-driven Cypress run tracking
+- Production deployment on Vercel
 
 GitHub OAuth establishes the user's identity. In organization mode, the token also verifies active organization membership. A separate server-only token dispatches the bounded selected-spec workflow; the app does not modify the source repository.
 
@@ -62,7 +63,9 @@ Both allowlists are comma-separated. The allowlist selected by the active mode m
 
 Select one or more failure rows and choose **Run selected**. The dashboard accepts 1–25 unique `cypress/e2e/**/*.cy.js` or `.cy.ts` paths and allows bounded repetition, concurrency, browser, and timeout settings. It dispatches `.github/workflows/cypress-selected-specs.yml`, which checks out `folio-org/stripes-testing`, runs its existing `cypress:repeat` command, and uploads logs, summaries, Allure results, screenshots, and videos for 14 days.
 
-The authenticated **Runs** page at `/runs` loads the GitHub user's latest runs from Supabase. GitHub sends signed `workflow_run` webhooks when a run is requested, starts, or completes. The webhook updates the durable row and publishes an opaque Supabase Realtime Broadcast; the open Runs page then reloads the authenticated list once and shows a completion toast. There is no timer polling. The page displays state, conclusion, duration, selected specs, runner settings, and artifact availability. Use **Actions** to inspect logs and download artifacts.
+The authenticated **Runs** page at `/runs` loads the GitHub user's 20 most recent runs from Supabase. GitHub sends signed `workflow_run` webhooks when a run is queued, starts, or completes. The webhook updates the durable row and publishes an opaque Supabase Realtime Broadcast; the open Runs page then reloads the authenticated list once and shows a completion toast. There is no timer polling. The page displays state, conclusion, duration, selected specs, runner settings, and artifact availability. Use **Actions** to inspect logs and download artifacts.
+
+The Broadcast channel name is an HMAC of the lowercased GitHub login and `AUTH_SECRET`. Its payload contains only the request UUID. Run data remains behind the authenticated `/api/runs` endpoint; the browser has no direct table access.
 
 Configure these server-only values for the dashboard:
 
@@ -72,38 +75,34 @@ Configure these server-only values for the dashboard:
 - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`: public Realtime connection settings.
 - `SUPABASE_SERVICE_ROLE_KEY`: server-only database and broadcast credential.
 
+All three Supabase variables must be configured together. Apply the migration under `supabase/migrations/` before enabling run dispatch. The table has RLS enabled and intentionally defines no browser policies.
+
 Configure `STRIPES_TESTING_ENVIRONMENTS_B64` as an encrypted secret in the dashboard GitHub repository. Its value is the Base64-encoded content of a valid, uncommitted `stripes-testing/environments.js`. The workflow decodes it only on the ephemeral runner. Never commit that file or expose its credentials to the browser.
 
 ## GitHub Source Repository
 
 Configure `GITHUB_SOURCE_OWNER`, `GITHUB_SOURCE_REPO`, and `GITHUB_SOURCE_REF` to resolve each ReportPortal `codeRef` to its source spec. Source links require no repository token. The selected-spec workflow checks out the public repository read-only and receives its test environment through an encrypted secret; the dashboard has no source-repository write path.
 
-## Cloudflare Workers Free
+## Production Deployment
 
-OpenNext provides the Worker adapter. No R2, D1, KV, or paid queue is required.
+Production is deployed to Vercel at [rp-failure-intelligence.vercel.app](https://rp-failure-intelligence.vercel.app). The repository is linked to the `rp-failure-intelligence` Vercel project.
 
-1. Authenticate Wrangler with `pnpm exec wrangler login`.
-2. Set each secret with `pnpm exec wrangler secret put <NAME>`, including authentication, `RP_API_KEY`, and other credential values.
-3. Set non-secret configuration the same way or add it under `vars` in `wrangler.jsonc`.
-4. Run `pnpm deploy`.
-5. Update the OAuth App homepage and callback to the assigned `workers.dev` or custom-domain URL.
+1. Configure all values from `.env.example` in the Vercel project. Encrypt secrets such as OAuth credentials, `AUTH_SECRET`, `RP_API_KEY`, `GITHUB_ACTIONS_TOKEN`, `GITHUB_WEBHOOK_SECRET`, and `SUPABASE_SERVICE_ROLE_KEY`.
+2. Apply the Supabase migrations and enable Realtime for the project.
+3. Configure a GitHub repository webhook with payload URL `https://<dashboard-host>/api/webhooks/github`, content type `application/json`, the same `GITHUB_WEBHOOK_SECRET`, and only the **Workflow runs** event.
+4. Configure `STRIPES_TESTING_ENVIRONMENTS_B64` as an encrypted GitHub Actions secret.
+5. Run `pnpm check` and deploy with `pnpm dlx vercel@latest --prod`.
+6. Set the production OAuth App homepage and callback to the deployed HTTPS origin.
 
-Useful commands:
-
-```bash
-pnpm preview     # build and run in the local Workers runtime
-pnpm upload      # upload a version without deploying it
-pnpm deploy      # build and deploy
-pnpm cf-typegen  # regenerate Cloudflare binding types
-```
-
-Cloudflare Workers Free can operate without recurring hosting fees, subject to provider quotas.
+OpenNext and Wrangler scripts remain in the repository for optional Cloudflare evaluation, but Vercel is the supported production deployment.
 
 ## Security Model
 
 - The only `NEXT_PUBLIC_*` integration values are Supabase's intentionally public URL and anon key; RLS grants the browser no table access.
 - Dashboard routes verify an authorized server session at the data boundary.
-- ReportPortal, Jira, TestRail, and OAuth credentials stay server-side.
+- OAuth, ReportPortal, GitHub Actions, webhook, and Supabase service-role credentials stay server-side.
 - Report project, launch, team, and history inputs are length/range validated before server-side API use.
 - The source repository and ref are fixed by deployment configuration, not accepted from browser requests.
 - GitHub Actions dispatch accepts only authenticated, validated, bounded selected-spec requests; no source-repository mutation API is exposed.
+- Supabase stores run requests and GitHub result metadata, not ReportPortal reports, OAuth tokens, test credentials, or user profiles.
+- `.env`, `.env.local`, and Vercel's local project metadata are ignored. Never commit credentials or generated environment files.
