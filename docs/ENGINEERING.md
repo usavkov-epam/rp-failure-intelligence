@@ -15,12 +15,12 @@ The application:
 - Authenticates users with GitHub OAuth and restricts access by active organization membership or a static GitHub-login allowlist.
 - Creates read-only links to a configured GitHub source repository.
 - Optionally creates TestRail links from test case identifiers.
+- Dispatches explicitly selected Cypress specs to a bounded GitHub Actions workflow.
 - Deploys as a Next.js application through OpenNext on Cloudflare Workers.
 
 The application does not:
 
-- Run Cypress tests locally or remotely.
-- Dispatch GitHub Actions workflows.
+- Run Cypress tests inside the dashboard or Vercel runtime.
 - Modify the configured source repository.
 - Store reports, user profiles, or credentials in an application database.
 - Show bundled, synthetic, cached, or cross-launch fallback report data.
@@ -71,6 +71,8 @@ flowchart LR
 | `src/auth.ts` | Identity and authorization | GitHub OAuth, mode-specific authorization, JWT/session shaping |
 | `src/lib/config.ts` | Configuration boundary | Server-side environment validation and normalized configuration |
 | `src/lib/reportportal.ts` | Integration boundary | ReportPortal discovery, launch resolution, item/history loading, explicit empty/error outcomes |
+| `src/lib/cypress-runs.ts` | Execution boundary | Authenticated GitHub Actions workflow dispatch |
+| `src/lib/cypress-run-request.ts` | Validation boundary | Selected spec paths and bounded runner settings |
 | `src/lib/analytics.ts` | Domain logic | Convert ReportPortal history into rows, trends, metrics, and risk categories |
 | `src/lib/types.ts` | Internal contracts | Dashboard DTOs, ReportPortal response shapes, report selection types |
 | `src/components/Dashboard.tsx` | Client UI | Selectors, filters, DataGrid, links, metrics, empty states, and error toasts |
@@ -192,6 +194,11 @@ All secrets are server-only. No secret may use a `NEXT_PUBLIC_` prefix.
 | `AUTHORIZATION_MODE` | No | No | `organization` (default) or `users` |
 | `AUTH_ALLOWED_ORGS` | In organization mode | No | Comma-separated GitHub organization allowlist |
 | `AUTH_ALLOWED_USERS` | In users mode | No | Comma-separated GitHub-login allowlist |
+| `GITHUB_ACTIONS_TOKEN` | For Cypress dispatch | Yes | Fine-grained token with Actions write access to the dashboard repository |
+| `GITHUB_ACTIONS_OWNER` | No | No | Workflow repository owner |
+| `GITHUB_ACTIONS_REPO` | No | No | Workflow repository name |
+| `GITHUB_ACTIONS_WORKFLOW` | No | No | Selected-spec workflow filename |
+| `GITHUB_ACTIONS_REF` | No | No | Workflow ref |
 | `AUTH_TRUST_HOST` | Deployment-dependent | No | Auth.js trusted-host behavior |
 | `RP_API_URL` | For live data | No | ReportPortal API v1 base URL |
 | `RP_API_KEY` | For live data | Yes | Read-only ReportPortal API token |
@@ -271,6 +278,8 @@ Override the script explicitly only for a deliberate alternate OAuth App configu
 
 - Never log, serialize, or expose OAuth, ReportPortal, Jira, or TestRail secrets.
 - Never route credentials through client props or browser storage.
+- Validate selected specs as repository-relative Cypress paths and bound spec count, repetitions, threads, browser, and timeout before dispatch.
+- Keep `GITHUB_ACTIONS_TOKEN` server-only and keep the Base64-encoded Cypress environment in the GitHub repository secret `STRIPES_TESTING_ENVIRONMENTS_B64`.
 - Keep GitHub source repository configuration server-controlled.
 - Maintain fail-closed authorization when the selected organization or user authorization rule cannot be verified.
 - Do not add an authentication bypass for development or tests.

@@ -1,0 +1,137 @@
+name: Cypress selected specs
+run-name: Cypress ${{ inputs.request_id }} by ${{ inputs.requested_by }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: Dashboard request ID
+        required: true
+        type: string
+      requested_by:
+        description: GitHub login that requested the run
+        required: true
+        type: string
+      specs:
+        description: JSON array of Cypress spec paths
+        required: true
+        type: string
+      runs:
+        description: Repetitions per spec
+        required: true
+        type: string
+      threads:
+        description: Concurrent repetitions
+        required: true
+        type: string
+      browser:
+        description: Cypress browser
+        required: true
+        type: string
+      timeout_seconds:
+        description: Per-run timeout in seconds
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cypress-selected-${{ inputs.request_id }}
+  cancel-in-progress: false
+
+jobs:
+  repeat-selected-specs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      SPECS_JSON: ${{ inputs.specs }}
+      RUNS: ${{ inputs.runs }}
+      THREADS: ${{ inputs.threads }}
+      BROWSER: ${{ inputs.browser }}
+      TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+      REQUEST_ID: ${{ inputs.request_id }}
+      REQUESTED_BY: ${{ inputs.requested_by }}
+      STRIPES_TESTING_REF: master
+      NO_COLOR: "1"
+    steps:
+      - name: Check out stripes-testing
+        uses: actions/checkout@v4
+        with:
+          repository: folio-org/stripes-testing
+          ref: ${{ env.STRIPES_TESTING_REF }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Validate request and write specs file
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const specs = JSON.parse(process.env.SPECS_JSON);
+          const pattern = /^cypress\/e2e\/[A-Za-z0-9_./-]+\.cy\.(?:js|ts)$/;
+          if (!Array.isArray(specs) || specs.length < 1 || specs.length > 25 || specs.some((spec) => !pattern.test(spec))) {
+            throw new Error('Invalid selected specs payload');
+          }
+          for (const [name, value, maximum] of [
+            ['runs', process.env.RUNS, 20],
+            ['threads', process.env.THREADS, 4],
+            ['timeout', process.env.TIMEOUT_SECONDS, 1200],
+          ]) {
+            const number = Number(value);
+            if (!Number.isInteger(number) || number < 1 || number > maximum) throw new Error(`Invalid ${name}`);
+          }
+          if (!['chrome', 'electron'].includes(process.env.BROWSER)) throw new Error('Invalid browser');
+          fs.writeFileSync('selected-specs.txt', `${[...new Set(specs)].join('\n')}\n`);
+          NODE
+
+      - name: Configure Cypress environment
+        env:
+          ENVIRONMENTS_B64: ${{ secrets.STRIPES_TESTING_ENVIRONMENTS_B64 }}
+        run: |
+          if [[ -z "$ENVIRONMENTS_B64" ]]; then
+            echo "Missing STRIPES_TESTING_ENVIRONMENTS_B64 repository secret" >&2
+            exit 1
+          fi
+          printf '%s' "$ENVIRONMENTS_B64" | base64 --decode > environments.js
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Run selected specs
+        run: |
+          yarn cypress:repeat \
+            --specs-file selected-specs.txt \
+            --runs "$RUNS" \
+            --threads "$THREADS" \
+            --browser "$BROWSER" \
+            --timeout-sec "$TIMEOUT_SECONDS"
+
+      - name: Upload Cypress results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-selected-${{ inputs.request_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            .local/cypress-run-logs/
+            allure-results/
+            cypress/screenshots/
+            cypress/videos/
+            selected-specs.txt
+
+      - name: Run metadata
+        if: always()
+        run: |
+          {
+            echo "### Cypress selected specs"
+            echo "- Requested by: $REQUESTED_BY"
+            echo "- Request ID: $REQUEST_ID"
+            echo "- Specs: $(wc -l < selected-specs.txt 2>/dev/null || echo 0)"
+            echo "- Runs per spec: $RUNS"
+            echo "- Threads: $THREADS"
+            echo "- Browser: $BROWSER"
+          } >> "$GITHUB_STEP_SUMMARY"

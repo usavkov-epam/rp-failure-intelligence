@@ -10,6 +10,10 @@ import {
   Chip,
   Container,
   CssBaseline,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   IconButton,
   InputLabel,
@@ -28,6 +32,7 @@ import {
 import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import LaunchRounded from "@mui/icons-material/LaunchRounded";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
+import PlayArrowRounded from "@mui/icons-material/PlayArrowRounded";
 import ScienceRounded from "@mui/icons-material/ScienceRounded";
 import { DataGrid, type GridColDef, type GridRowSelectionModel } from "@mui/x-data-grid";
 import type { DashboardData, FailureRow, ReportSelection, ReportSourceOptions, Risk } from "@/lib/types";
@@ -135,6 +140,11 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
   const [moduleName, setModuleName] = useState("");
   const [selected, setSelected] = useState<GridRowSelectionModel>({ type: "include", ids: new Set() });
   const [copied, setCopied] = useState(false);
+  const [runDialogOpen, setRunDialogOpen] = useState(false);
+  const [runPending, setRunPending] = useState(false);
+  const [runError, setRunError] = useState("");
+  const [runResult, setRunResult] = useState<{ requestId: string; actionsUrl: string } | null>(null);
+  const [runOptions, setRunOptions] = useState({ runs: 5, threads: 1, browser: "chrome", timeoutSeconds: 600 });
   const reportFormRef = useRef<HTMLFormElement>(null);
   const deferredSearch = useDeferredValue(search.toLowerCase());
   const latestLaunchId = reportSourceOptions.launchRuns[0]?.id;
@@ -258,7 +268,7 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
             <FormControl size="small" sx={{ minWidth: 170 }}><InputLabel>Risk</InputLabel><Select label="Risk" value={risk} onChange={(event) => setRisk(event.target.value)}><MenuItem value="">All risks</MenuItem>{Object.keys(riskColors).map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</Select></FormControl>
             <FormControl size="small" sx={{ minWidth: 170 }}><InputLabel>Module</InputLabel><Select label="Module" value={moduleName} onChange={(event) => setModuleName(event.target.value)}><MenuItem value="">All modules</MenuItem>{modules.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</Select></FormControl>
             <Button
-              variant="contained"
+              variant="outlined"
               startIcon={<ContentCopyRounded />}
               disabled={!selectedSpecs.length}
               onClick={async () => {
@@ -268,6 +278,17 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
             >
               Copy {selectedSpecs.length || "selected"} {selectedSpecs.length === 1 ? "spec" : "specs"}
             </Button>
+            <Button
+              variant="contained"
+              startIcon={<PlayArrowRounded />}
+              disabled={!selectedSpecs.length}
+              onClick={() => {
+                setRunError("");
+                setRunDialogOpen(true);
+              }}
+            >
+              Run selected
+            </Button>
           </Stack>
           <Paper variant="outlined" sx={{ height: 690, width: "100%" }}>
             <DataGrid rows={rows} columns={columns} checkboxSelection disableRowSelectionOnClick rowSelectionModel={selected} onRowSelectionModelChange={setSelected} rowHeight={76} pageSizeOptions={[10, 25, 50]} localeText={{ noRowsLabel: "No data" }} initialState={{ pagination: { paginationModel: { pageSize: 10 } }, sorting: { sortModel: [{ field: "failureRate", sort: "desc" }] } }} sx={{ border: 0, "& .MuiDataGrid-columnHeaderTitle": { fontWeight: 800 }, "& .MuiDataGrid-cell": { alignItems: "center" } }} />
@@ -275,6 +296,61 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
         </Container>
       </Box>
       <Snackbar open={copied} autoHideDuration={2500} onClose={() => setCopied(false)} message={`${selectedSpecs.length} unique spec ${selectedSpecs.length === 1 ? "path" : "paths"} copied`} />
+      <Dialog open={runDialogOpen} onClose={() => !runPending && setRunDialogOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Run selected Cypress specs</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Alert severity="info">{selectedSpecs.length} unique {selectedSpecs.length === 1 ? "spec" : "specs"} will run in GitHub Actions.</Alert>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
+              <TextField label="Runs per spec" type="number" value={runOptions.runs} slotProps={{ htmlInput: { min: 1, max: 20 } }} onChange={(event) => setRunOptions((current) => ({ ...current, runs: Number(event.target.value) }))} />
+              <TextField label="Concurrent threads" type="number" value={runOptions.threads} slotProps={{ htmlInput: { min: 1, max: 4 } }} onChange={(event) => setRunOptions((current) => ({ ...current, threads: Number(event.target.value) }))} />
+              <FormControl>
+                <InputLabel>Browser</InputLabel>
+                <Select label="Browser" value={runOptions.browser} onChange={(event) => setRunOptions((current) => ({ ...current, browser: event.target.value }))}>
+                  <MenuItem value="chrome">Chrome</MenuItem>
+                  <MenuItem value="electron">Electron</MenuItem>
+                </Select>
+              </FormControl>
+              <TextField label="Per-run timeout (seconds)" type="number" value={runOptions.timeoutSeconds} slotProps={{ htmlInput: { min: 60, max: 1200 } }} onChange={(event) => setRunOptions((current) => ({ ...current, timeoutSeconds: Number(event.target.value) }))} />
+            </Box>
+            {runError && <Alert severity="error">{runError}</Alert>}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRunDialogOpen(false)} disabled={runPending}>Cancel</Button>
+          <Button
+            variant="contained"
+            startIcon={<PlayArrowRounded />}
+            loading={runPending}
+            onClick={async () => {
+              setRunPending(true);
+              setRunError("");
+              try {
+                const response = await fetch("/api/runs", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ specs: selectedSpecs, ...runOptions }),
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || "Unable to start Cypress run");
+                setRunResult(result);
+                setRunDialogOpen(false);
+              } catch (error) {
+                setRunError(error instanceof Error ? error.message : "Unable to start Cypress run");
+              } finally {
+                setRunPending(false);
+              }
+            }}
+          >
+            Start run
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Snackbar open={Boolean(runResult)} autoHideDuration={12000} onClose={() => setRunResult(null)} anchorOrigin={{ vertical: "bottom", horizontal: "right" }}>
+        <Alert severity="success" variant="filled" action={<Button color="inherit" size="small" component={Link} href={runResult?.actionsUrl || "#"} target="_blank">Open Actions</Button>}>
+          Cypress run queued. Request {runResult?.requestId.slice(0, 8)}
+        </Alert>
+      </Snackbar>
       <Snackbar open={Boolean(initialData.meta.error)} autoHideDuration={8000} anchorOrigin={{ vertical: "bottom", horizontal: "right" }}>
         <Alert severity="error" variant="filled" sx={{ width: "100%" }}>Failed to load ReportPortal data: {initialData.meta.error}</Alert>
       </Snackbar>

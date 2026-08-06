@@ -12,9 +12,10 @@ The included `.env.example` demonstrates read-only source links to `folio-org/st
 - Server-only ReportPortal REST client with explicit error and empty states
 - Auth.js GitHub OAuth with selectable organization-membership or static-user authorization
 - Read-only links from ReportPortal failures to source specs in GitHub
+- Authenticated dispatch of selected Cypress specs to GitHub Actions
 - OpenNext deployment to Cloudflare Workers Free
 
-GitHub OAuth establishes the user's identity. In organization mode, the token also verifies active organization membership. The app does not dispatch workflows or modify the source repository.
+GitHub OAuth establishes the user's identity. In organization mode, the token also verifies active organization membership. A separate server-only token dispatches the bounded selected-spec workflow; the app does not modify the source repository.
 
 ## Local Setup
 
@@ -57,9 +58,20 @@ The authorization mode is selected by `AUTHORIZATION_MODE`:
 
 Both allowlists are comma-separated. The allowlist selected by the active mode must contain at least one entry or configuration validation fails.
 
+## Cypress Runs
+
+Select one or more failure rows and choose **Run selected**. The dashboard accepts 1–25 unique `cypress/e2e/**/*.cy.js` or `.cy.ts` paths and allows bounded repetition, concurrency, browser, and timeout settings. It dispatches `.github/workflows/cypress-selected-specs.yml`, which checks out `folio-org/stripes-testing`, runs its existing `cypress:repeat` command, and uploads logs, summaries, Allure results, screenshots, and videos for 14 days.
+
+Configure these server-only values for the dashboard:
+
+- `GITHUB_ACTIONS_TOKEN`: fine-grained token with **Actions: Read and write** for `usavkov-epam/rp-failure-intelligence`.
+- `GITHUB_ACTIONS_OWNER`, `GITHUB_ACTIONS_REPO`, `GITHUB_ACTIONS_WORKFLOW`, and `GITHUB_ACTIONS_REF`: dispatch destination, with defaults shown in `.env.example`.
+
+Configure `STRIPES_TESTING_ENVIRONMENTS_B64` as an encrypted secret in the dashboard GitHub repository. Its value is the Base64-encoded content of a valid, uncommitted `stripes-testing/environments.js`. The workflow decodes it only on the ephemeral runner. Never commit that file or expose its credentials to the browser.
+
 ## GitHub Source Repository
 
-Configure `GITHUB_SOURCE_OWNER`, `GITHUB_SOURCE_REPO`, and `GITHUB_SOURCE_REF` to resolve each ReportPortal `codeRef` to its source spec. For the public `folio-org/stripes-testing` repository this requires no GitHub App, installation, repository secret, or workflow. The dashboard has no repository write path.
+Configure `GITHUB_SOURCE_OWNER`, `GITHUB_SOURCE_REPO`, and `GITHUB_SOURCE_REF` to resolve each ReportPortal `codeRef` to its source spec. Source links require no repository token. The selected-spec workflow checks out the public repository read-only and receives its test environment through an encrypted secret; the dashboard has no source-repository write path.
 
 ## Cloudflare Workers Free
 
@@ -89,4 +101,4 @@ Cloudflare Workers Free can operate without recurring hosting fees, subject to p
 - ReportPortal, Jira, TestRail, and OAuth credentials stay server-side.
 - Report project, launch, team, and history inputs are length/range validated before server-side API use.
 - The source repository and ref are fixed by deployment configuration, not accepted from browser requests.
-- No GitHub Actions or repository mutation API is exposed.
+- GitHub Actions dispatch accepts only authenticated, validated, bounded selected-spec requests; no source-repository mutation API is exposed.
