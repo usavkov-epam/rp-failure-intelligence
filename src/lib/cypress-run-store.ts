@@ -15,6 +15,8 @@ interface CypressRunRow {
   threads: number;
   browser: string;
   timeout_seconds: number;
+  environment: string | null;
+  cypress_config: Record<string, number | boolean>;
   status: CypressRunState;
   conclusion: string | null;
   github_run_id: number | null;
@@ -49,6 +51,8 @@ function toRecord(row: CypressRunRow): CypressRunRecord {
     threads: row.threads,
     browser: row.browser,
     timeoutSeconds: row.timeout_seconds,
+    environment: row.environment || undefined,
+    cypressConfig: row.cypress_config || {},
     requestedAt: row.created_at,
     status: row.status,
     conclusion: row.conclusion,
@@ -82,6 +86,8 @@ export async function createCypressRun(
     threads: request.threads,
     browser: request.browser,
     timeout_seconds: request.timeoutSeconds,
+    environment: request.environment || null,
+    cypress_config: request.cypressConfig,
     actions_url: actionsUrl,
   }).select().single();
 

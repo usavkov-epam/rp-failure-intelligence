@@ -1,11 +1,15 @@
 "use client";
 
-import { useDeferredValue, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
   Chip,
+  CircularProgress,
   Container,
   CssBaseline,
   Dialog,
@@ -30,7 +34,9 @@ import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import LaunchRounded from "@mui/icons-material/LaunchRounded";
 import PlayArrowRounded from "@mui/icons-material/PlayArrowRounded";
 import ScienceRounded from "@mui/icons-material/ScienceRounded";
+import ExpandMoreRounded from "@mui/icons-material/ExpandMoreRounded";
 import { DataGrid, type GridColDef, type GridRowSelectionModel } from "@mui/x-data-grid";
+import type { CypressConfigOverrides } from "@/lib/cypress-run-request";
 import type { DashboardData, FailureRow, ReportSelection, ReportSourceOptions, Risk } from "@/lib/types";
 import AppHeader from "./AppHeader";
 import { appTheme } from "./app-theme";
@@ -42,6 +48,44 @@ const riskColors: Record<Risk, "error" | "warning" | "info" | "success"> = {
   Isolated: "success",
 };
 
+interface ReportSourceChildrenResponse {
+  launchName?: string;
+  launches: string[];
+  launchRuns: ReportSourceOptions["launchRuns"];
+  error?: string;
+}
+
+interface CypressRunFormOptions {
+  runs: number;
+  threads: number;
+  browser: "chrome" | "electron";
+  timeoutSeconds: number;
+  environment: string;
+  cypressConfig: CypressConfigOverrides;
+}
+
+const cypressNumberOptions: Array<{
+  key: keyof Pick<CypressConfigOverrides,
+    | "viewportWidth"
+    | "viewportHeight"
+    | "defaultCommandTimeout"
+    | "pageLoadTimeout"
+    | "requestTimeout"
+    | "responseTimeout"
+    | "retries">;
+  label: string;
+  min: number;
+  max: number;
+}> = [
+  { key: "viewportWidth", label: "Viewport width (px)", min: 320, max: 3_840 },
+  { key: "viewportHeight", label: "Viewport height (px)", min: 320, max: 2_160 },
+  { key: "defaultCommandTimeout", label: "Command timeout (ms)", min: 1_000, max: 300_000 },
+  { key: "pageLoadTimeout", label: "Page-load timeout (ms)", min: 1_000, max: 300_000 },
+  { key: "requestTimeout", label: "Request timeout (ms)", min: 1_000, max: 300_000 },
+  { key: "responseTimeout", label: "Response timeout (ms)", min: 1_000, max: 300_000 },
+  { key: "retries", label: "Cypress retries", min: 0, max: 5 },
+];
+
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <Paper variant="outlined" sx={{ p: 2.25, minHeight: 122 }}>
@@ -49,6 +93,48 @@ function Metric({ label, value, detail }: { label: string; value: string; detail
       <Typography variant="h2" sx={{ my: 0.5, fontSize: 34 }}>{value}</Typography>
       <Typography variant="caption" color="text.secondary">{detail}</Typography>
     </Paper>
+  );
+}
+
+function RecentRuns({ row }: { row: FailureRow }) {
+  return (
+    <Box
+      role="img"
+      aria-label={`Run history, oldest to newest: ${row.statuses.join(", ")}`}
+      sx={{ display: "flex", alignItems: "center", gap: "3px", width: "100%", height: 30 }}
+    >
+      {row.statuses.map((status, index) => {
+        const launchNumber = row.launchNumbers[index];
+        const isLatest = index === row.statuses.length - 1;
+        const color = status === "PASSED"
+          ? "primary.main"
+          : status === "FAILED"
+            ? "secondary.main"
+            : "action.disabled";
+
+        return (
+          <Tooltip
+            key={`${launchNumber}:${index}`}
+            title={`${launchNumber ? `Launch #${launchNumber}` : `Run ${index + 1}`}: ${status.toLowerCase()}`}
+          >
+            <Box
+              component="span"
+              sx={{
+                flex: "1 1 0",
+                minWidth: 4,
+                maxWidth: 16,
+                height: 24,
+                bgcolor: color,
+                borderRadius: "2px",
+                outline: isLatest ? "2px solid" : "none",
+                outlineColor: isLatest ? "text.primary" : "transparent",
+                outlineOffset: 1,
+              }}
+            />
+          </Tooltip>
+        );
+      })}
+    </Box>
   );
 }
 
@@ -105,11 +191,12 @@ function Distribution({ data }: { data: DashboardData }) {
   );
 }
 
-export default function Dashboard({ initialData, reportSelection, reportSourceOptions, sourceRepository, user }: {
+export default function Dashboard({ initialData, reportSelection, reportSourceOptions, sourceRepository, cypressEnvironments, user }: {
   initialData: DashboardData;
   reportSelection: ReportSelection;
   reportSourceOptions: ReportSourceOptions;
   sourceRepository: { owner: string; repository: string; ref: string };
+  cypressEnvironments: readonly string[];
   user: { name: string };
 }) {
   const [search, setSearch] = useState("");
@@ -121,8 +208,21 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
   const [runPending, setRunPending] = useState(false);
   const [runError, setRunError] = useState("");
   const [runResult, setRunResult] = useState<{ requestId: string; actionsUrl: string } | null>(null);
-  const [runOptions, setRunOptions] = useState({ runs: 5, threads: 1, browser: "chrome", timeoutSeconds: 600 });
+  const [runOptions, setRunOptions] = useState<CypressRunFormOptions>({
+    runs: 5,
+    threads: 1,
+    browser: "chrome",
+    timeoutSeconds: 600,
+    environment: "",
+    cypressConfig: {},
+  });
+  const [draftSource, setDraftSource] = useState(reportSelection);
+  const [draftSourceOptions, setDraftSourceOptions] = useState(reportSourceOptions);
+  const [sourceLoading, setSourceLoading] = useState<"launches" | "runs" | null>(null);
+  const [sourceLoadError, setSourceLoadError] = useState("");
   const reportFormRef = useRef<HTMLFormElement>(null);
+  const sourceRequestRef = useRef<AbortController | null>(null);
+  const stableSourceRef = useRef({ selection: reportSelection, options: reportSourceOptions });
   const deferredSearch = useDeferredValue(search.toLowerCase());
   const latestLaunchId = reportSourceOptions.launchRuns[0]?.id;
   const isHistoricalRun = reportSelection.launchId !== undefined
@@ -137,6 +237,91 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
     .filter((row) => selected.ids.has(row.id))
     .map((row) => row.specPath))];
 
+  useEffect(() => () => sourceRequestRef.current?.abort(), []);
+
+  const cancelSourceLoad = () => {
+    sourceRequestRef.current?.abort();
+    sourceRequestRef.current = null;
+    setDraftSource(stableSourceRef.current.selection);
+    setDraftSourceOptions(stableSourceRef.current.options);
+    setSourceLoadError("");
+    setSourceLoading(null);
+  };
+
+  const loadSourceChildren = async (
+    project: string,
+    requestedLaunchName: string | undefined,
+    loading: "launches" | "runs",
+  ) => {
+    sourceRequestRef.current?.abort();
+    const controller = new AbortController();
+    sourceRequestRef.current = controller;
+    setSourceLoading(loading);
+    setSourceLoadError("");
+    setDraftSource((current) => ({
+      ...current,
+      project,
+      launchName: requestedLaunchName || "",
+      launchId: undefined,
+    }));
+    setDraftSourceOptions((current) => ({
+      ...current,
+      launches: loading === "launches" ? [] : current.launches,
+      launchRuns: [],
+    }));
+
+    const query = new URLSearchParams({ project });
+    if (requestedLaunchName) query.set("launchName", requestedLaunchName);
+
+    try {
+      const response = await fetch(`/api/report-source?${query}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const result = await response.json() as ReportSourceChildrenResponse;
+      if (!response.ok) throw new Error(result.error || "Unable to load report source options");
+      if (sourceRequestRef.current !== controller) return;
+
+      const nextSelection: ReportSelection = {
+        ...stableSourceRef.current.selection,
+        project,
+        launchName: result.launchName || "",
+        launchId: result.launchRuns[0]?.id,
+      };
+      const nextOptions: ReportSourceOptions = {
+        projects: stableSourceRef.current.options.projects,
+        launches: result.launches,
+        launchRuns: result.launchRuns,
+      };
+      stableSourceRef.current = { selection: nextSelection, options: nextOptions };
+      setDraftSource(nextSelection);
+      setDraftSourceOptions(nextOptions);
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return;
+      if (sourceRequestRef.current !== controller) return;
+      setDraftSource(stableSourceRef.current.selection);
+      setDraftSourceOptions(stableSourceRef.current.options);
+      setSourceLoadError(error instanceof Error ? error.message : "Unable to load report source options");
+    } finally {
+      if (sourceRequestRef.current === controller) {
+        sourceRequestRef.current = null;
+        setSourceLoading(null);
+      }
+    }
+  };
+
+  const setCypressConfig = <Key extends keyof CypressConfigOverrides>(
+    key: Key,
+    value: CypressConfigOverrides[Key],
+  ) => {
+    setRunOptions((current) => {
+      const cypressConfig = { ...current.cypressConfig };
+      if (value === undefined) delete cypressConfig[key];
+      else cypressConfig[key] = value;
+      return { ...current, cypressConfig };
+    });
+  };
+
   const columns: GridColDef<FailureRow>[] = [
     { field: "risk", headerName: "Risk", width: 125, renderCell: ({ value }) => <Chip size="small" label={value} color={riskColors[value as Risk]} variant="outlined" /> },
     {
@@ -144,6 +329,15 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
       renderCell: ({ row }) => <Box sx={{ py: 1 }}><Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>{row.name}</Typography><Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}><Typography variant="caption" color="primary" sx={{ fontFamily: "monospace" }}>{row.specPath}</Typography><Tooltip title="Copy spec path"><IconButton size="small" onClick={() => navigator.clipboard.writeText(row.specPath)}><ContentCopyRounded sx={{ fontSize: 15 }} /></IconButton></Tooltip></Stack></Box>,
     },
     { field: "module", headerName: "Module", width: 135 },
+    {
+      field: "statuses",
+      headerName: `Last ${initialData.meta.historyDepth} runs`,
+      description: "Oldest run on the left, newest run on the right. Green passed; red failed.",
+      width: Math.min(260, Math.max(170, initialData.meta.historyDepth * 7 + 40)),
+      sortable: false,
+      filterable: false,
+      renderCell: ({ row }) => <RecentRuns row={row} />,
+    },
     { field: "failureRate", headerName: "Failure rate", width: 125, type: "number", valueFormatter: (value) => `${value}%` },
     { field: "currentStreak", headerName: "Streak", width: 90, type: "number" },
     { field: "transitions", headerName: "Transitions", width: 105, type: "number" },
@@ -173,46 +367,54 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
               <FormControl size="small" required>
                 <InputLabel>Project</InputLabel>
                 <Select
-                  key={reportSelection.project}
                   name="project"
                   label="Project"
-                  defaultValue={reportSelection.project}
-                  onChange={() => {
-                    requestAnimationFrame(() => reportFormRef.current?.requestSubmit());
+                  value={draftSource.project}
+                  onChange={(event) => {
+                    void loadSourceChildren(event.target.value, undefined, "launches");
                   }}
                 >
-                  {reportSourceOptions.projects.map((project) => <MenuItem key={project} value={project}>{project}</MenuItem>)}
+                  {draftSourceOptions.projects.map((project) => <MenuItem key={project} value={project}>{project}</MenuItem>)}
                 </Select>
               </FormControl>
-              <FormControl size="small" required>
-                <InputLabel>Launch name</InputLabel>
-                <Select
-                  key={`${reportSelection.project}:${reportSelection.launchName}`}
-                  name="launchName"
-                  label="Launch name"
-                  defaultValue={reportSelection.launchName}
-                  onChange={() => {
-                    requestAnimationFrame(() => reportFormRef.current?.requestSubmit());
-                  }}
-                >
-                  {reportSourceOptions.launches.map((launchName) => <MenuItem key={launchName} value={launchName}>{launchName}</MenuItem>)}
-                </Select>
-              </FormControl>
-              <FormControl size="small" required disabled={!reportSourceOptions.launchRuns.length}>
-                <InputLabel>Run</InputLabel>
-                <Select
-                  key={`${reportSelection.project}:${reportSelection.launchName}:${reportSelection.launchId}`}
-                  name="launchId"
-                  label="Run"
-                  defaultValue={reportSelection.launchId ?? ""}
-                >
-                  {reportSourceOptions.launchRuns.map((run, index) => (
-                    <MenuItem key={run.id} value={run.id}>
-                      #{run.number} · {run.status}{index === 0 ? " · Latest" : ""}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Box sx={{ position: "relative" }}>
+                <FormControl size="small" required fullWidth disabled={sourceLoading === "launches"}>
+                  <InputLabel>Launch name</InputLabel>
+                  <Select
+                    name="launchName"
+                    label="Launch name"
+                    value={draftSource.launchName}
+                    onChange={(event) => {
+                      void loadSourceChildren(draftSource.project, event.target.value, "runs");
+                    }}
+                  >
+                    {draftSourceOptions.launches.map((launchName) => <MenuItem key={launchName} value={launchName}>{launchName}</MenuItem>)}
+                  </Select>
+                </FormControl>
+                {sourceLoading === "launches" && <CircularProgress aria-label="Loading launch names" size={18} sx={{ position: "absolute", right: 36, top: 11 }} />}
+              </Box>
+              <Box sx={{ position: "relative" }}>
+                <FormControl size="small" required fullWidth disabled={Boolean(sourceLoading) || !draftSourceOptions.launchRuns.length}>
+                  <InputLabel>Run</InputLabel>
+                  <Select
+                    name="launchId"
+                    label="Run"
+                    value={draftSource.launchId ?? ""}
+                    onChange={(event) => {
+                      const selection = { ...draftSource, launchId: Number(event.target.value) };
+                      stableSourceRef.current = { ...stableSourceRef.current, selection };
+                      setDraftSource(selection);
+                    }}
+                  >
+                    {draftSourceOptions.launchRuns.map((run, index) => (
+                      <MenuItem key={run.id} value={run.id}>
+                        #{run.number} · {run.status}{index === 0 ? " · Latest" : ""}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                {sourceLoading && <CircularProgress aria-label="Loading runs" size={18} sx={{ position: "absolute", right: 36, top: 11 }} />}
+              </Box>
               <TextField name="team" label="Team" size="small" defaultValue={reportSelection.team} required />
               <FormControl size="small">
                 <InputLabel>History depth</InputLabel>
@@ -220,8 +422,18 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
                   {[5, 10, 15, 20, 30].map((value) => <MenuItem key={value} value={value}>{value} runs</MenuItem>)}
                 </Select>
               </FormControl>
-              <Button type="submit" variant="contained">Apply</Button>
+              <Stack direction="row" spacing={0.75}>
+                {sourceLoading && <Button type="button" variant="text" onClick={cancelSourceLoad}>Cancel</Button>}
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={Boolean(sourceLoading) || !draftSource.launchName || draftSource.launchId === undefined}
+                >
+                  Apply
+                </Button>
+              </Stack>
             </Box>
+            {sourceLoadError && <Alert severity="error" sx={{ mt: 1.5 }} onClose={() => setSourceLoadError("")}>{sourceLoadError}</Alert>}
           </Paper>
           {isHistoricalRun && (
             <Alert severity="warning" variant="outlined" sx={{ mb: 2 }}>
@@ -262,8 +474,11 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
               Run selected
             </Button>
           </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+            {rows.length} of {initialData.rows.length} failures match the active filters. Sorting and column filters apply to all matching rows before pagination.
+          </Typography>
           <Paper variant="outlined" sx={{ height: 690, width: "100%" }}>
-            <DataGrid rows={rows} columns={columns} checkboxSelection disableRowSelectionOnClick rowSelectionModel={selected} onRowSelectionModelChange={setSelected} rowHeight={76} pageSizeOptions={[10, 25, 50]} localeText={{ noRowsLabel: "No data" }} initialState={{ pagination: { paginationModel: { pageSize: 10 } }, sorting: { sortModel: [{ field: "failureRate", sort: "desc" }] } }} sx={{ border: 0, "& .MuiDataGrid-columnHeaderTitle": { fontWeight: 800 }, "& .MuiDataGrid-cell": { alignItems: "center" } }} />
+            <DataGrid rows={rows} columns={columns} sortingMode="client" filterMode="client" paginationMode="client" checkboxSelection disableRowSelectionOnClick rowSelectionModel={selected} onRowSelectionModelChange={setSelected} rowHeight={76} pageSizeOptions={[10, 25, 50, 100]} localeText={{ noRowsLabel: "No data" }} initialState={{ pagination: { paginationModel: { pageSize: 10 } }, sorting: { sortModel: [{ field: "failureRate", sort: "desc" }] } }} sx={{ border: 0, "& .MuiDataGrid-columnHeaderTitle": { fontWeight: 800 }, "& .MuiDataGrid-cell": { alignItems: "center" } }} />
           </Paper>
         </Container>
       </Box>
@@ -273,6 +488,22 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <Alert severity="info">{selectedSpecs.length} unique {selectedSpecs.length === 1 ? "spec" : "specs"} will run in GitHub Actions.</Alert>
+            <FormControl>
+              <InputLabel>Environment profile</InputLabel>
+              <Select
+                label="Environment profile"
+                value={runOptions.environment}
+                onChange={(event) => setRunOptions((current) => ({ ...current, environment: event.target.value }))}
+              >
+                <MenuItem value="">Configured default</MenuItem>
+                {cypressEnvironments.map((environment) => <MenuItem key={environment} value={environment}>{environment}</MenuItem>)}
+              </Select>
+            </FormControl>
+            {!cypressEnvironments.length && (
+              <Typography variant="caption" color="text.secondary">
+                No selectable profiles are published by this deployment. The active profile from the encrypted environments.js secret will be used.
+              </Typography>
+            )}
             <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
               <TextField label="Runs per spec" type="number" value={runOptions.runs} slotProps={{ htmlInput: { min: 1, max: 20 } }} onChange={(event) => setRunOptions((current) => ({ ...current, runs: Number(event.target.value) }))} />
               <TextField label="Concurrent threads" type="number" value={runOptions.threads} slotProps={{ htmlInput: { min: 1, max: 4 } }} onChange={(event) => setRunOptions((current) => ({ ...current, threads: Number(event.target.value) }))} />
@@ -285,6 +516,48 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
               </FormControl>
               <TextField label="Per-run timeout (seconds)" type="number" value={runOptions.timeoutSeconds} slotProps={{ htmlInput: { min: 60, max: 1200 } }} onChange={(event) => setRunOptions((current) => ({ ...current, timeoutSeconds: Number(event.target.value) }))} />
             </Box>
+            <Accordion variant="outlined" disableGutters>
+              <AccordionSummary expandIcon={<ExpandMoreRounded />}>
+                <Box>
+                  <Typography sx={{ fontWeight: 700 }}>Advanced Cypress configuration</Typography>
+                  <Typography variant="caption" color="text.secondary">Blank values inherit from the selected environment and cypress.config.js.</Typography>
+                </Box>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
+                  {cypressNumberOptions.map(({ key, label, min, max }) => (
+                    <TextField
+                      key={key}
+                      label={label}
+                      type="number"
+                      value={runOptions.cypressConfig[key] ?? ""}
+                      slotProps={{ htmlInput: { min, max } }}
+                      onChange={(event) => setCypressConfig(
+                        key,
+                        event.target.value === "" ? undefined : Number(event.target.value),
+                      )}
+                    />
+                  ))}
+                  {(["video", "screenshotOnRunFailure"] as const).map((key) => (
+                    <FormControl key={key}>
+                      <InputLabel>{key === "video" ? "Record video" : "Screenshot on failure"}</InputLabel>
+                      <Select
+                        label={key === "video" ? "Record video" : "Screenshot on failure"}
+                        value={runOptions.cypressConfig[key] === undefined ? "" : String(runOptions.cypressConfig[key])}
+                        onChange={(event) => setCypressConfig(
+                          key,
+                          event.target.value === "" ? undefined : event.target.value === "true",
+                        )}
+                      >
+                        <MenuItem value="">Inherit default</MenuItem>
+                        <MenuItem value="true">Enabled</MenuItem>
+                        <MenuItem value="false">Disabled</MenuItem>
+                      </Select>
+                    </FormControl>
+                  ))}
+                </Box>
+              </AccordionDetails>
+            </Accordion>
             {runError && <Alert severity="error">{runError}</Alert>}
           </Stack>
         </DialogContent>
@@ -301,7 +574,11 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
                 const response = await fetch("/api/runs", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ specs: selectedSpecs, ...runOptions }),
+                  body: JSON.stringify({
+                    specs: selectedSpecs,
+                    ...runOptions,
+                    environment: runOptions.environment || undefined,
+                  }),
                 });
                 const result = await response.json() as { requestId: string; actionsUrl: string; error?: string };
                 if (!response.ok) throw new Error(result.error || "Unable to start Cypress run");

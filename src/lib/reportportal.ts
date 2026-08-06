@@ -2,12 +2,10 @@ import "server-only";
 
 import { analyzeHistory } from "./analytics";
 import { config } from "./config";
+import { collectAllPages, type PageResult } from "./pagination";
 import type { DashboardData, HistoryEntry, ReportPortalItem, ReportSelection, ReportSourceOptions } from "./types";
 
-interface Page<T> {
-  content: T[];
-  page?: { totalElements: number; totalPages: number };
-}
+type Page<T> = PageResult<T>;
 
 interface Launch {
   id: number;
@@ -54,8 +52,8 @@ function errorData(selection: ReportSelection, error: string): DashboardData {
   };
 }
 
-async function fetchPage<T>(project: string, endpoint: string, params: Record<string, string | number>): Promise<Page<T>> {
-  return fetchReportPortalPage<T>(`${project}/${endpoint}`, params);
+async function fetchAllPages<T>(project: string, endpoint: string, params: Record<string, string | number>): Promise<Page<T>> {
+  return fetchAllReportPortalPages<T>(`${project}/${endpoint}`, params);
 }
 
 async function fetchReportPortalPage<T>(endpoint: string, params: Record<string, string | number>): Promise<Page<T>> {
@@ -72,13 +70,23 @@ async function fetchReportPortalPage<T>(endpoint: string, params: Record<string,
   return response.json();
 }
 
+async function fetchAllReportPortalPages<T>(
+  endpoint: string,
+  params: Record<string, string | number>,
+): Promise<Page<T>> {
+  // Keep concurrency bounded so large ReportPortal projects do not create an API request spike.
+  return collectAllPages((page) => (
+    fetchReportPortalPage<T>(endpoint, { ...params, "page.page": page })
+  ));
+}
+
 export async function resolveReportSelection(selection: ReportSelection): Promise<{
   selection: ReportSelection;
   options: ReportSourceOptions;
 }> {
   let projects = [selection.project];
   try {
-    const projectPage = await fetchReportPortalPage<Project>("project/list", {
+    const projectPage = await fetchAllReportPortalPages<Project>("project/list", {
       "page.size": 200,
       "page.sort": "projectName,ASC",
     });
@@ -90,7 +98,7 @@ export async function resolveReportSelection(selection: ReportSelection): Promis
   const project = projects.includes(selection.project) ? selection.project : projects[0] ?? selection.project;
   let launches = project === selection.project ? [selection.launchName] : [];
   try {
-    const launchPage = await fetchPage<Launch>(project, "launch", {
+    const launchPage = await fetchAllPages<Launch>(project, "launch", {
       "page.size": 200,
       "page.sort": "startTime,DESC",
     });
@@ -108,7 +116,7 @@ export async function resolveReportSelection(selection: ReportSelection): Promis
 
   let launchRuns: Launch[] = [];
   try {
-    const launchPage = await fetchPage<Launch>(project, "launch", {
+    const launchPage = await fetchAllPages<Launch>(project, "launch", {
       "filter.eq.name": launchName,
       "page.size": 200,
       "page.sort": "startTime,DESC",
@@ -137,10 +145,40 @@ export async function resolveReportSelection(selection: ReportSelection): Promis
   };
 }
 
+export async function loadReportSourceChildren(project: string, requestedLaunchName?: string): Promise<{
+  launchName: string | undefined;
+  launches: string[];
+  launchRuns: ReportSourceOptions["launchRuns"];
+}> {
+  const launchPage = await fetchAllPages<Launch>(project, "launch", {
+    "page.size": 200,
+    "page.sort": "startTime,DESC",
+  });
+  const completedLaunches = launchPage.content.filter(({ status }) => status !== "IN_PROGRESS");
+  const launches = [...new Set(completedLaunches.map(({ name }) => name).filter(Boolean))];
+  const launchName = requestedLaunchName && launches.includes(requestedLaunchName)
+    ? requestedLaunchName
+    : launches[0];
+
+  if (!launchName) return { launchName: undefined, launches, launchRuns: [] };
+
+  const runPage = await fetchAllPages<Launch>(project, "launch", {
+    "filter.eq.name": launchName,
+    "page.size": 200,
+    "page.sort": "startTime,DESC",
+  });
+  const launchRuns = runPage.content
+    .filter((launch) => launch.name === launchName)
+    .filter(({ status }) => status !== "IN_PROGRESS")
+    .map(({ id, number, status, startTime }) => ({ id, number, status, startTime }));
+
+  return { launchName, launches, launchRuns };
+}
+
 async function loadLiveData(selection: ReportSelection): Promise<DashboardData> {
   const { apiUrl } = config.reportPortal;
   const { project, launchName, launchId, team, historyDepth } = selection;
-  const launchPage = await fetchPage<Launch>(project, "launch", {
+  const launchPage = await fetchAllPages<Launch>(project, "launch", {
     "filter.eq.name": launchName,
     "page.size": 200,
     "page.sort": "startTime,DESC",
@@ -160,11 +198,11 @@ async function loadLiveData(selection: ReportSelection): Promise<DashboardData> 
     "filter.eq.hasStats": "true",
   };
   const [suite, failed] = await Promise.all([
-    fetchPage<ReportPortalItem>(project, "item/v2", baseParams),
-    fetchPage<ReportPortalItem>(project, "item/v2", { ...baseParams, "filter.in.status": "FAILED" }),
+    fetchAllPages<ReportPortalItem>(project, "item/v2", baseParams),
+    fetchAllPages<ReportPortalItem>(project, "item/v2", { ...baseParams, "filter.in.status": "FAILED" }),
   ]);
   const history = failed.content.length
-    ? await fetchPage<HistoryEntry>(project, "item/history", {
+    ? await fetchAllPages<HistoryEntry>(project, "item/history", {
       "filter.eq.launchId": launch.id,
       "filter.in.status": "FAILED",
       "filter.cnt.name": team,

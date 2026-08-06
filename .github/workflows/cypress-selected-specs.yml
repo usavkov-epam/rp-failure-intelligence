@@ -32,6 +32,16 @@ on:
         description: Per-run timeout in seconds
         required: true
         type: string
+      environment:
+        description: environments.js profile name; empty uses its configured default
+        required: false
+        default: ""
+        type: string
+      cypress_config:
+        description: Validated JSON object containing non-secret Cypress configuration overrides
+        required: false
+        default: "{}"
+        type: string
 
 permissions:
   contents: read
@@ -50,6 +60,8 @@ jobs:
       THREADS: ${{ inputs.threads }}
       BROWSER: ${{ inputs.browser }}
       TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+      SELECTED_ENVIRONMENT: ${{ inputs.environment }}
+      DASHBOARD_CYPRESS_CONFIG_JSON: ${{ inputs.cypress_config }}
       REQUEST_ID: ${{ inputs.request_id }}
       REQUESTED_BY: ${{ inputs.requested_by }}
       STRIPES_TESTING_REF: master
@@ -71,20 +83,51 @@ jobs:
           node <<'NODE'
           const fs = require('node:fs');
           const specs = JSON.parse(process.env.SPECS_JSON);
+          const cypressConfig = JSON.parse(process.env.DASHBOARD_CYPRESS_CONFIG_JSON || '{}');
           const pattern = /^cypress\/e2e\/[A-Za-z0-9_./-]+\.cy\.(?:js|ts)$/;
           if (!Array.isArray(specs) || specs.length < 1 || specs.length > 25 || specs.some((spec) => !pattern.test(spec))) {
             throw new Error('Invalid selected specs payload');
           }
-          for (const [name, value, maximum] of [
-            ['runs', process.env.RUNS, 20],
-            ['threads', process.env.THREADS, 4],
-            ['timeout', process.env.TIMEOUT_SECONDS, 1200],
+          for (const [name, value, minimum, maximum] of [
+            ['runs', process.env.RUNS, 1, 20],
+            ['threads', process.env.THREADS, 1, 4],
+            ['timeout', process.env.TIMEOUT_SECONDS, 60, 1200],
           ]) {
             const number = Number(value);
-            if (!Number.isInteger(number) || number < 1 || number > maximum) throw new Error(`Invalid ${name}`);
+            if (!Number.isInteger(number) || number < minimum || number > maximum) throw new Error(`Invalid ${name}`);
           }
           if (!['chrome', 'electron'].includes(process.env.BROWSER)) throw new Error('Invalid browser');
+          if (process.env.SELECTED_ENVIRONMENT && !/^[A-Za-z0-9_.-]{1,80}$/.test(process.env.SELECTED_ENVIRONMENT)) {
+            throw new Error('Invalid Cypress environment');
+          }
+          const rules = {
+            viewportWidth: ['CYPRESS_VIEWPORT_WIDTH', 320, 3840, 'number'],
+            viewportHeight: ['CYPRESS_VIEWPORT_HEIGHT', 320, 2160, 'number'],
+            defaultCommandTimeout: ['CYPRESS_DEFAULT_COMMAND_TIMEOUT', 1000, 300000, 'number'],
+            pageLoadTimeout: ['CYPRESS_PAGE_LOAD_TIMEOUT', 1000, 300000, 'number'],
+            requestTimeout: ['CYPRESS_REQUEST_TIMEOUT', 1000, 300000, 'number'],
+            responseTimeout: ['CYPRESS_RESPONSE_TIMEOUT', 1000, 300000, 'number'],
+            retries: ['CYPRESS_RETRIES', 0, 5, 'number'],
+            video: ['CYPRESS_VIDEO', null, null, 'boolean'],
+            screenshotOnRunFailure: ['CYPRESS_SCREENSHOT_ON_RUN_FAILURE', null, null, 'boolean'],
+          };
+          if (!cypressConfig || Array.isArray(cypressConfig) || typeof cypressConfig !== 'object') {
+            throw new Error('Invalid Cypress configuration');
+          }
+          for (const [key, value] of Object.entries(cypressConfig)) {
+            const rule = rules[key];
+            if (!rule) throw new Error(`Unsupported Cypress configuration: ${key}`);
+            const [environmentVariable, minimum, maximum, type] = rule;
+            const validNumber = type === 'number' && Number.isInteger(value) && value >= minimum && value <= maximum;
+            const validBoolean = type === 'boolean' && typeof value === 'boolean';
+            if (!validNumber && !validBoolean) throw new Error(`Invalid Cypress configuration: ${key}`);
+            fs.appendFileSync(process.env.GITHUB_ENV, `${environmentVariable}=${value}\n`);
+          }
           fs.writeFileSync('selected-specs.txt', `${[...new Set(specs)].join('\n')}\n`);
+          fs.writeFileSync('run-config.json', `${JSON.stringify({
+            environment: process.env.SELECTED_ENVIRONMENT || null,
+            cypressConfig,
+          }, null, 2)}\n`);
           NODE
 
       - name: Configure Cypress environment
@@ -96,6 +139,24 @@ jobs:
             exit 1
           fi
           printf '%s' "$ENVIRONMENTS_B64" | base64 --decode > environments.js
+          chmod 600 environments.js
+
+      - name: Select Cypress environment
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const environmentsPath = path.resolve('environments.js');
+          const configuration = require(environmentsPath);
+          const activeEnvironment = process.env.SELECTED_ENVIRONMENT || configuration.activeEnvironment || null;
+          if (activeEnvironment && !Object.hasOwn(configuration.environments || {}, activeEnvironment)) {
+            throw new Error(`Cypress environment profile is unavailable: ${activeEnvironment}`);
+          }
+          fs.writeFileSync(environmentsPath, `module.exports = ${JSON.stringify({
+            ...configuration,
+            activeEnvironment,
+          }, null, 2)};\n`, { mode: 0o600 });
+          NODE
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
@@ -122,6 +183,7 @@ jobs:
             cypress/screenshots/
             cypress/videos/
             selected-specs.txt
+            run-config.json
 
       - name: Run metadata
         if: always()
@@ -134,4 +196,6 @@ jobs:
             echo "- Runs per spec: $RUNS"
             echo "- Threads: $THREADS"
             echo "- Browser: $BROWSER"
+            echo "- Environment: ${SELECTED_ENVIRONMENT:-configured default}"
+            echo "- Cypress overrides: $(node -e \"const c=require('./run-config.json').cypressConfig; console.log(Object.keys(c).join(', ') || 'none')\")"
           } >> "$GITHUB_STEP_SUMMARY"

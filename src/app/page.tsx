@@ -39,6 +39,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     reportSelection={selection}
     reportSourceOptions={options}
     sourceRepository={config.githubSource}
+    cypressEnvironments={config.cypress.environmentNames}
     user={{ name: session.user.name || session.user.githubLogin || "User" }}
   />;
 }

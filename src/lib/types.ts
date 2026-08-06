@@ -96,6 +96,8 @@ export interface CypressRunRecord {
   threads: number;
   browser: string;
   timeoutSeconds: number;
+  environment?: string;
+  cypressConfig: Record<string, number | boolean>;
   requestedAt: string;
   status: CypressRunState;
   conclusion: string | null;

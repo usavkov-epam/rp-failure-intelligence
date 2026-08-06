@@ -75,7 +75,8 @@ flowchart LR
 | `src/app` | Routing and server composition | Authentication boundary, query validation, redirects, Auth.js endpoints, page metadata |
 | `src/auth.ts` | Identity and authorization | GitHub OAuth, mode-specific authorization, JWT/session shaping |
 | `src/lib/config.ts` | Configuration boundary | Server-side environment validation and normalized configuration |
-| `src/lib/reportportal.ts` | Integration boundary | ReportPortal discovery, launch resolution, item/history loading, explicit empty/error outcomes |
+| `src/lib/reportportal.ts` | Integration boundary | Paginated ReportPortal discovery, launch resolution, item/history loading, explicit empty/error outcomes |
+| `src/lib/pagination.ts` | Pagination utility | Ordered, bounded-concurrency traversal of every page returned by ReportPortal |
 | `src/lib/cypress-runs.ts` | Execution boundary | Authenticated GitHub Actions workflow dispatch and completed-run artifact discovery |
 | `src/lib/cypress-run-store.ts` | Persistence boundary | Service-role run storage, user-scoped listing, updates, HMAC channel names, and Broadcast publishing |
 | `src/lib/cypress-run-request.ts` | Validation boundary | Selected spec paths and bounded runner settings |
@@ -84,6 +85,7 @@ flowchart LR
 | `src/components/Dashboard.tsx` | Client UI | Selectors, filters, DataGrid, links, metrics, empty states, and error toasts |
 | `src/components/RunsView.tsx` | Client UI | Durable run list, Realtime subscription, result links, and completion toasts |
 | `src/components/AppHeader.tsx` | Shared navigation | Analysis/runs navigation, refresh, source state, and sign-out controls |
+| `src/app/api/report-source/route.ts` | Authenticated selection API | Dependent launch-name and run discovery for the selected ReportPortal project |
 | `src/app/api/runs/route.ts` | Authenticated run API | User-scoped run listing and validated workflow dispatch |
 | `src/app/api/webhooks/github/route.ts` | Webhook boundary | HMAC, repository, workflow, and request-ID validation; run updates and broadcasts |
 | `supabase/migrations` | Database schema | Server-managed `cypress_runs` table, constraints, index, and RLS |
@@ -189,6 +191,10 @@ A report selection contains:
 
 Projects, launch names, and completed runs are discovered server-side. Changing project or launch name defaults to its latest completed run. Selecting an older run preserves its ID in the URL and displays a warning that the analysis is historical.
 
+The report-source form loads its choices as a dependent `Project → Launch name → Run` chain. A changed parent disables affected child controls while the authenticated selection API loads their options. Starting another parent change aborts the stale browser request; the visible Cancel action aborts the active request and restores the last settled selection. The report itself is not replaced until the user applies a complete selection.
+
+ReportPortal discovery, test-item, failure, and history requests traverse every advertised API page with bounded concurrency. The browser receives the complete analyzed row set; Data Grid sorting and filtering run client-side across all matching rows before UI pagination.
+
 ### Metrics
 
 The dashboard currently calculates:
@@ -243,6 +249,7 @@ All secrets are server-only. No secret may use a `NEXT_PUBLIC_` prefix.
 | `GITHUB_ACTIONS_REPO` | No | No | Workflow repository name |
 | `GITHUB_ACTIONS_WORKFLOW` | No | No | Selected-spec workflow filename |
 | `GITHUB_ACTIONS_REF` | No | No | Workflow ref |
+| `CYPRESS_ENVIRONMENT_NAMES` | No | No | Comma-separated allowlist of `environments.js` profile names published to the run dialog |
 | `GITHUB_WEBHOOK_SECRET` | For run updates | Yes | Verifies GitHub `workflow_run` HMAC signatures |
 | `NEXT_PUBLIC_SUPABASE_URL` | With run tracking | No | Supabase project URL; required with the other two Supabase values |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | With run tracking | No | Public key used only for opaque Broadcast subscriptions; required with the other two Supabase values |
@@ -330,6 +337,8 @@ Override the script explicitly only for a deliberate alternate OAuth App configu
 - Never log, serialize, or expose OAuth, ReportPortal, GitHub Actions, webhook, or Supabase service-role secrets.
 - Never route credentials through client props or browser storage.
 - Validate selected specs as repository-relative Cypress paths and bound spec count, repetitions, threads, browser, and timeout before dispatch.
+- Allow only deployment-published Cypress environment names. Keep profile contents and all credentials in the encrypted GitHub Actions secret rather than workflow inputs or Supabase.
+- Restrict UI-provided Cypress configuration to the bounded non-secret allowlist in `cypress-run-request.ts`; validate it again inside the workflow.
 - Keep `GITHUB_ACTIONS_TOKEN` server-only and keep the Base64-encoded Cypress environment in the GitHub repository secret `STRIPES_TESTING_ENVIRONMENTS_B64`.
 - Keep `SUPABASE_SERVICE_ROLE_KEY` and `GITHUB_WEBHOOK_SECRET` server-only. Do not add browser table policies for `cypress_runs`.
 - Keep GitHub source repository configuration server-controlled.
@@ -345,7 +354,7 @@ Run the complete repository check before merging:
 pnpm check
 ```
 
-It currently runs nine Vitest tests in two files, ESLint, legacy script syntax checks, and a production Next.js build.
+It currently runs 15 Vitest tests in three files, ESLint, legacy script syntax checks, and a production Next.js build.
 
 For behavior changes, also validate the smallest relevant path:
 
@@ -356,9 +365,10 @@ For behavior changes, also validate the smallest relevant path:
 - Error data: an API failure shows an error toast and no rows.
 - Source links: generated URLs use the configured owner, repository, and ref.
 - Cypress request validation: duplicate specs are deduplicated and all counts, paths, browsers, and timeouts remain within server and workflow bounds.
+- Cypress configuration: environment names are deployment-allowlisted; profile secrets remain in `environments.js`; non-secret overrides remain within both API and workflow bounds.
 - Run tracking: `/api/runs` is authenticated and user-scoped; a valid signed webhook updates the matching row and causes one authenticated refresh on `/runs`.
 
-Existing Vitest coverage exercises analytics and Cypress run-request validation. New tests should prioritize ReportPortal client contracts with mocked fetch responses, Auth.js authorization, the run API, webhook signature/filter behavior, Supabase repository failures, and browser states above.
+Existing Vitest coverage exercises analytics, Cypress run-request validation, and ordered pagination. New tests should prioritize full ReportPortal client contracts with mocked fetch responses, Auth.js authorization, the run API, webhook signature/filter behavior, Supabase repository failures, and browser states above.
 
 ## Deployment
 
@@ -379,7 +389,6 @@ The current production alias is `https://rp-failure-intelligence.vercel.app`. Au
 Current known limitations:
 
 - Team is currently free text rather than a server-discovered selection.
-- ReportPortal page traversal is not yet generalized across all endpoints.
 - Automated coverage does not yet include integration routes, authentication, webhooks, Supabase, or browser workflows.
 - The Runs page displays only the 20 most recent records per authenticated user and does not provide in-app artifact downloads.
 - The dashboard component contains several compact inline render blocks that may merit extraction as behavior grows.
@@ -387,9 +396,8 @@ Current known limitations:
 Recommended order of work:
 
 1. Discover valid teams for the selected launch and replace the team text field with a selection.
-2. Implement complete pagination for discovery, items, failures, and history.
-3. Add focused automated tests for authentication, ReportPortal contracts, run APIs, webhook filtering, and Supabase failures.
-4. Add browser coverage for analysis, dispatch, Realtime updates, and the Runs page.
+2. Add focused automated tests for authentication, ReportPortal contracts, run APIs, webhook filtering, and Supabase failures.
+3. Add browser coverage for analysis, dispatch, Realtime updates, and the Runs page.
 
 ## Architecture Decision Checklist
 

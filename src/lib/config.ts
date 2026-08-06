@@ -21,6 +21,7 @@ const environmentSchema = z.object({
   GITHUB_ACTIONS_REPO: z.string().min(1).default("rp-failure-intelligence"),
   GITHUB_ACTIONS_WORKFLOW: z.string().min(1).default("cypress-selected-specs.yml"),
   GITHUB_ACTIONS_REF: z.string().min(1).default("main"),
+  CYPRESS_ENVIRONMENT_NAMES: commaSeparatedList,
   GITHUB_WEBHOOK_SECRET: z.string().min(32).optional(),
   GITHUB_SOURCE_OWNER: z.string().min(1).default("folio-org"),
   GITHUB_SOURCE_REPO: z.string().min(1).default("stripes-testing"),
@@ -72,6 +73,9 @@ export const config = {
     repository: env.GITHUB_ACTIONS_REPO,
     workflow: env.GITHUB_ACTIONS_WORKFLOW,
     ref: env.GITHUB_ACTIONS_REF,
+  },
+  cypress: {
+    environmentNames: env.CYPRESS_ENVIRONMENT_NAMES,
   },
   githubWebhook: {
     secret: env.GITHUB_WEBHOOK_SECRET,

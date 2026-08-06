@@ -36,7 +36,11 @@ export async function POST(request: Request) {
 
   const requestId = crypto.randomUUID();
   const requestedBy = getRequestedBy(session);
-  const { owner, repository, workflow } = (await import("@/lib/config")).config.githubActions;
+  const configuration = (await import("@/lib/config")).config;
+  if (parsed.data.environment && !configuration.cypress.environmentNames.includes(parsed.data.environment)) {
+    return NextResponse.json({ error: "Cypress environment is not allowed" }, { status: 400 });
+  }
+  const { owner, repository, workflow } = configuration.githubActions;
   const actionsUrl = `https://github.com/${owner}/${repository}/actions/workflows/${workflow}`;
   try {
     const run = await createCypressRun(requestId, requestedBy, parsed.data, actionsUrl);

@@ -61,7 +61,7 @@ Both allowlists are comma-separated. The allowlist selected by the active mode m
 
 ## Cypress Runs
 
-Select one or more failure rows and choose **Run selected**. The dashboard accepts 1–25 unique `cypress/e2e/**/*.cy.js` or `.cy.ts` paths and allows bounded repetition, concurrency, browser, and timeout settings. It dispatches `.github/workflows/cypress-selected-specs.yml`, which checks out `folio-org/stripes-testing`, runs its existing `cypress:repeat` command, and uploads logs, summaries, Allure results, screenshots, and videos for 14 days.
+Select one or more failure rows and choose **Run selected**. The dashboard accepts 1–25 unique `cypress/e2e/**/*.cy.js` or `.cy.ts` paths and allows bounded repetition, concurrency, browser, and timeout settings. An allowlisted `environments.js` profile can be selected without exposing its credentials. Advanced options can override bounded, non-secret Cypress settings such as viewport, Cypress timeouts, retries, video, and failure screenshots. The workflow checks out `folio-org/stripes-testing`, runs its existing `cypress:repeat` command, and uploads logs, configuration metadata, summaries, Allure results, screenshots, and videos for 14 days.
 
 The authenticated **Runs** page at `/runs` loads the GitHub user's 20 most recent runs from Supabase. GitHub sends signed `workflow_run` webhooks when a run is queued, starts, or completes. The webhook updates the durable row and publishes an opaque Supabase Realtime Broadcast; the open Runs page then reloads the authenticated list once and shows a completion toast. There is no timer polling. The page displays state, conclusion, duration, selected specs, runner settings, and artifact availability. Use **Actions** to inspect logs and download artifacts.
 
@@ -72,12 +72,15 @@ Configure these server-only values for the dashboard:
 - `GITHUB_ACTIONS_TOKEN`: fine-grained token with **Actions: Read and write** for `usavkov-epam/rp-failure-intelligence`; write dispatches workflows and read retrieves run and artifact status.
 - `GITHUB_ACTIONS_OWNER`, `GITHUB_ACTIONS_REPO`, `GITHUB_ACTIONS_WORKFLOW`, and `GITHUB_ACTIONS_REF`: dispatch destination, with defaults shown in `.env.example`.
 - `GITHUB_WEBHOOK_SECRET`: shared HMAC secret configured both in Vercel and the repository's `workflow_run` webhook.
+- `CYPRESS_ENVIRONMENT_NAMES`: comma-separated, non-secret profile names that are safe to display and must exactly match keys in the encrypted `environments.js` file.
 - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`: public Realtime connection settings.
 - `SUPABASE_SERVICE_ROLE_KEY`: server-only database and broadcast credential.
 
 All three Supabase variables must be configured together. Apply the migration under `supabase/migrations/` before enabling run dispatch. The table has RLS enabled and intentionally defines no browser policies.
 
 Configure `STRIPES_TESTING_ENVIRONMENTS_B64` as an encrypted secret in the dashboard GitHub repository. Its value is the Base64-encoded content of a valid, uncommitted `stripes-testing/environments.js`. The workflow decodes it only on the ephemeral runner. Never commit that file or expose its credentials to the browser.
+
+Environment selection changes only `activeEnvironment`; the selected profile supplies `baseUrl`, API endpoints, tenant, credentials, and environment flags from the encrypted file. UI-provided Cypress overrides are validated independently and applied through Cypress configuration environment variables. Secret environment values are never accepted as workflow inputs or stored in Supabase.
 
 ## GitHub Source Repository
 

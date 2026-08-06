@@ -125,6 +125,9 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
                     </Box>
                     <Box>
                       <Typography variant="body2">{run.browser} · {run.threads} {run.threads === 1 ? "thread" : "threads"} · {formatRunDuration(run)}</Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                        {run.environment || "Configured environment"} · {Object.keys(run.cypressConfig).length ? `${Object.keys(run.cypressConfig).length} Cypress overrides` : "Default Cypress config"}
+                      </Typography>
                       <Typography variant="caption" color="text.secondary">{run.artifactCount ? `${run.artifactCount} result artifact${run.artifactCount === 1 ? "" : "s"}` : run.status === "completed" ? "No artifacts" : "Results pending"}</Typography>
                     </Box>
                     <Button size="small" endIcon={<LaunchRounded />} component={Link} href={run.actionsUrl} target="_blank" rel="noreferrer">Actions</Button>

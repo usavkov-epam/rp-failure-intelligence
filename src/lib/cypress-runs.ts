@@ -36,6 +36,8 @@ export async function dispatchCypressRun(requestId: string, request: CypressRunR
           threads: String(request.threads),
           browser: request.browser,
           timeout_seconds: String(request.timeoutSeconds),
+          environment: request.environment || "",
+          cypress_config: JSON.stringify(request.cypressConfig),
         },
       }),
       cache: "no-store",
