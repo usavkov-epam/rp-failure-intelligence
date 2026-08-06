@@ -24,6 +24,7 @@
     "@mui/material-nextjs": "^9.3.0",
     "@mui/x-data-grid": "^9.11.0",
     "@opennextjs/cloudflare": "^1.20.2",
+    "@supabase/supabase-js": "^2.112.2",
     "next": "16.3.0",
     "next-auth": "^5.0.0-beta.32",
     "react": "19.2.8",

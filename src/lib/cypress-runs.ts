@@ -3,20 +3,28 @@ import "server-only";
 import { config } from "./config";
 import type { CypressRunRequest } from "./cypress-run-request";
 
-export async function dispatchCypressRun(request: CypressRunRequest, requestedBy: string) {
+const githubHeaders = (token: string) => ({
+  Accept: "application/vnd.github+json",
+  Authorization: `Bearer ${token}`,
+  "X-GitHub-Api-Version": "2022-11-28",
+});
+
+interface GitHubArtifact {
+  name: string;
+  expired: boolean;
+}
+
+export async function dispatchCypressRun(requestId: string, request: CypressRunRequest, requestedBy: string) {
   const { token, owner, repository, workflow, ref } = config.githubActions;
   if (!token) throw new Error("GitHub Actions dispatch is not configured");
 
-  const requestId = crypto.randomUUID();
   const response = await fetch(
     `https://api.github.com/repos/${owner}/${repository}/actions/workflows/${workflow}/dispatches`,
     {
       method: "POST",
       headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
+        ...githubHeaders(token),
         "Content-Type": "application/json",
-        "X-GitHub-Api-Version": "2022-11-28",
       },
       body: JSON.stringify({
         ref,
@@ -42,4 +50,17 @@ export async function dispatchCypressRun(request: CypressRunRequest, requestedBy
     requestId,
     actionsUrl: `https://github.com/${owner}/${repository}/actions/workflows/${workflow}`,
   };
+}
+
+export async function loadCypressArtifacts(runId: number) {
+  const { token, owner, repository } = config.githubActions;
+  if (!token) throw new Error("GitHub Actions artifacts are not configured");
+  const response = await fetch(
+    `https://api.github.com/repos/${owner}/${repository}/actions/runs/${runId}/artifacts?per_page=100`,
+    { headers: githubHeaders(token), cache: "no-store" },
+  );
+  if (!response.ok) throw new Error(`GitHub Actions artifacts request failed with ${response.status}`);
+
+  const data = await response.json() as { artifacts: GitHubArtifact[] };
+  return data.artifacts.filter((artifact) => !artifact.expired).map((artifact) => artifact.name);
 }

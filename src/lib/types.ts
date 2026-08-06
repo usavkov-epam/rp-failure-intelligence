@@ -86,6 +86,27 @@ export interface ReportSourceOptions {
   launchRuns: LaunchRunOption[];
 }
 
+export type CypressRunState = "queued" | "in_progress" | "completed";
+
+export interface CypressRunRecord {
+  requestId: string;
+  actionsUrl: string;
+  specs: string[];
+  runs: number;
+  threads: number;
+  browser: string;
+  timeoutSeconds: number;
+  requestedAt: string;
+  status: CypressRunState;
+  conclusion: string | null;
+  runId?: number;
+  runNumber?: number;
+  startedAt?: string | null;
+  updatedAt?: string;
+  artifactCount?: number;
+  artifactNames?: string[];
+}
+
 export interface ReportPortalItem {
   id: number;
   parent?: number;

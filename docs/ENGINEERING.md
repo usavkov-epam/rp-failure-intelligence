@@ -16,6 +16,7 @@ The application:
 - Creates read-only links to a configured GitHub source repository.
 - Optionally creates TestRail links from test case identifiers.
 - Dispatches explicitly selected Cypress specs to a bounded GitHub Actions workflow.
+- Tracks dispatched workflow status, conclusion, duration, and artifact availability through the GitHub Actions API.
 - Deploys as a Next.js application through OpenNext on Cloudflare Workers.
 
 The application does not:
@@ -71,7 +72,7 @@ flowchart LR
 | `src/auth.ts` | Identity and authorization | GitHub OAuth, mode-specific authorization, JWT/session shaping |
 | `src/lib/config.ts` | Configuration boundary | Server-side environment validation and normalized configuration |
 | `src/lib/reportportal.ts` | Integration boundary | ReportPortal discovery, launch resolution, item/history loading, explicit empty/error outcomes |
-| `src/lib/cypress-runs.ts` | Execution boundary | Authenticated GitHub Actions workflow dispatch |
+| `src/lib/cypress-runs.ts` | Execution boundary | Authenticated GitHub Actions workflow dispatch, status lookup, and artifact discovery |
 | `src/lib/cypress-run-request.ts` | Validation boundary | Selected spec paths and bounded runner settings |
 | `src/lib/analytics.ts` | Domain logic | Convert ReportPortal history into rows, trends, metrics, and risk categories |
 | `src/lib/types.ts` | Internal contracts | Dashboard DTOs, ReportPortal response shapes, report selection types |
@@ -106,6 +107,35 @@ sequenceDiagram
     end
   end
 ```
+
+### Cypress execution status flow
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant B as Browser
+  participant N as Next.js API
+  participant G as GitHub Actions
+  participant S as Supabase
+
+  U->>B: Select specs and start run
+  B->>N: POST /api/runs
+  N->>S: Insert queued run
+  N->>G: workflow_dispatch
+  G-->>N: 204 Accepted
+  N-->>B: Request UUID and Actions URL
+  G->>N: Signed workflow_run webhook
+  N->>G: List artifacts when completed
+  N->>S: Update durable run and broadcast opaque event
+  S-->>B: Realtime run_changed event
+  B->>N: GET /api/runs
+  N->>S: Load authenticated user's runs
+  N-->>B: Updated list and result metadata
+```
+
+The workflow `run-name` embeds the server-generated request UUID. The webhook validates `X-Hub-Signature-256`, repository, workflow path, and UUID before updating an existing row. The `cypress_runs` table has RLS enabled with no browser policies, so only server routes using the service role can read or mutate rows. Authenticated list requests are scoped case-insensitively to the session's GitHub login.
+
+Realtime uses a public Supabase Broadcast channel whose name is an HMAC of the GitHub login and `AUTH_SECRET`. Events contain only the opaque request UUID. Receiving an event authorizes nothing; it tells the browser to make one normal authenticated `/api/runs` request. This avoids polling while keeping run data behind Auth.js authorization.
 
 ## Authentication and Authorization
 
@@ -199,6 +229,10 @@ All secrets are server-only. No secret may use a `NEXT_PUBLIC_` prefix.
 | `GITHUB_ACTIONS_REPO` | No | No | Workflow repository name |
 | `GITHUB_ACTIONS_WORKFLOW` | No | No | Selected-spec workflow filename |
 | `GITHUB_ACTIONS_REF` | No | No | Workflow ref |
+| `GITHUB_WEBHOOK_SECRET` | For run updates | Yes | Verifies GitHub `workflow_run` HMAC signatures |
+| `NEXT_PUBLIC_SUPABASE_URL` | For run history | No | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | For Realtime | No | Public key used only to subscribe to opaque broadcast channels |
+| `SUPABASE_SERVICE_ROLE_KEY` | For run history | Yes | Server-only database and broadcast access |
 | `AUTH_TRUST_HOST` | Deployment-dependent | No | Auth.js trusted-host behavior |
 | `RP_API_URL` | For live data | No | ReportPortal API v1 base URL |
 | `RP_API_KEY` | For live data | Yes | Read-only ReportPortal API token |
@@ -280,6 +314,7 @@ Override the script explicitly only for a deliberate alternate OAuth App configu
 - Never route credentials through client props or browser storage.
 - Validate selected specs as repository-relative Cypress paths and bound spec count, repetitions, threads, browser, and timeout before dispatch.
 - Keep `GITHUB_ACTIONS_TOKEN` server-only and keep the Base64-encoded Cypress environment in the GitHub repository secret `STRIPES_TESTING_ENVIRONMENTS_B64`.
+- Keep `SUPABASE_SERVICE_ROLE_KEY` and `GITHUB_WEBHOOK_SECRET` server-only. Do not add browser table policies for `cypress_runs`.
 - Keep GitHub source repository configuration server-controlled.
 - Maintain fail-closed authorization when the selected organization or user authorization rule cannot be verified.
 - Do not add an authentication bypass for development or tests.

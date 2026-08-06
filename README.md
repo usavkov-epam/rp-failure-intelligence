@@ -62,10 +62,15 @@ Both allowlists are comma-separated. The allowlist selected by the active mode m
 
 Select one or more failure rows and choose **Run selected**. The dashboard accepts 1–25 unique `cypress/e2e/**/*.cy.js` or `.cy.ts` paths and allows bounded repetition, concurrency, browser, and timeout settings. It dispatches `.github/workflows/cypress-selected-specs.yml`, which checks out `folio-org/stripes-testing`, runs its existing `cypress:repeat` command, and uploads logs, summaries, Allure results, screenshots, and videos for 14 days.
 
+The **Recent Cypress runs** panel loads the authenticated GitHub user's latest runs from Supabase. GitHub sends signed `workflow_run` webhooks when a run is requested, starts, or completes. The webhook updates the durable row and publishes an opaque Supabase Realtime Broadcast; subscribed browsers then reload the authenticated run list once and show a completion toast. There is no timer polling. The panel displays state, conclusion, duration, selected specs, runner settings, and artifact availability. Use **Actions** to inspect logs and download artifacts.
+
 Configure these server-only values for the dashboard:
 
-- `GITHUB_ACTIONS_TOKEN`: fine-grained token with **Actions: Read and write** for `usavkov-epam/rp-failure-intelligence`.
+- `GITHUB_ACTIONS_TOKEN`: fine-grained token with **Actions: Read and write** for `usavkov-epam/rp-failure-intelligence`; write dispatches workflows and read retrieves run and artifact status.
 - `GITHUB_ACTIONS_OWNER`, `GITHUB_ACTIONS_REPO`, `GITHUB_ACTIONS_WORKFLOW`, and `GITHUB_ACTIONS_REF`: dispatch destination, with defaults shown in `.env.example`.
+- `GITHUB_WEBHOOK_SECRET`: shared HMAC secret configured both in Vercel and the repository's `workflow_run` webhook.
+- `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`: public Realtime connection settings.
+- `SUPABASE_SERVICE_ROLE_KEY`: server-only database and broadcast credential.
 
 Configure `STRIPES_TESTING_ENVIRONMENTS_B64` as an encrypted secret in the dashboard GitHub repository. Its value is the Base64-encoded content of a valid, uncommitted `stripes-testing/environments.js`. The workflow decodes it only on the ephemeral runner. Never commit that file or expose its credentials to the browser.
 
@@ -96,7 +101,7 @@ Cloudflare Workers Free can operate without recurring hosting fees, subject to p
 
 ## Security Model
 
-- No `NEXT_PUBLIC_*` secret variables are used.
+- The only `NEXT_PUBLIC_*` integration values are Supabase's intentionally public URL and anon key; RLS grants the browser no table access.
 - Dashboard routes verify an authorized server session at the data boundary.
 - ReportPortal, Jira, TestRail, and OAuth credentials stay server-side.
 - Report project, launch, team, and history inputs are length/range validated before server-side API use.
