@@ -26,6 +26,16 @@ describe("dashboardSettingsInputSchema", () => {
       defaultHistoryDepth: 31,
     }).success).toBe(false);
   });
+
+  it("rejects plaintext HTTP integration URLs", () => {
+    expect(dashboardSettingsInputSchema.safeParse({
+      reportPortalApiUrl: "http://report.example.org/api/v1",
+      defaultProject: "nightly",
+      defaultLaunchName: "nightly-eureka",
+      defaultTeam: "team-a",
+      defaultHistoryDepth: 10,
+    }).success).toBe(false);
+  });
 });
 
 describe("cypressProfileInputSchema", () => {
@@ -52,5 +62,11 @@ describe("cypressProfileInputSchema", () => {
 
   it("rejects executable profile names and invalid endpoints", () => {
     expect(cypressProfileInputSchema.safeParse({ ...profile, name: "x; rm", okapiHost: "not-a-url" }).success).toBe(false);
+  });
+
+  it("rejects plaintext HTTP Cypress endpoints", () => {
+    expect(cypressProfileInputSchema.safeParse({ ...profile, baseUrl: "http://folio.example.org" }).success).toBe(false);
+    expect(cypressProfileInputSchema.safeParse({ ...profile, okapiHost: "http://okapi.example.org" }).success).toBe(false);
+    expect(cypressProfileInputSchema.safeParse({ ...profile, edgeHost: "http://edge.example.org" }).success).toBe(false);
   });
 });

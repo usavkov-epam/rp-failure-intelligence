@@ -22,7 +22,6 @@ const environmentSchema = z.object({
   GITHUB_ACTIONS_WORKFLOW: z.string().min(1).default("cypress-selected-specs.yml"),
   GITHUB_ACTIONS_REF: z.string().min(1).default("main"),
   GITHUB_WEBHOOK_SECRET: z.string().min(32).optional(),
-  WORKFLOW_PROFILE_SECRET: z.string().min(32).optional(),
   GITHUB_SOURCE_OWNER: z.string().min(1).default("folio-org"),
   GITHUB_SOURCE_REPO: z.string().min(1).default("stripes-testing"),
   GITHUB_SOURCE_REF: z.string().min(1).default("master"),
@@ -73,9 +72,6 @@ export const config = {
   },
   githubWebhook: {
     secret: env.GITHUB_WEBHOOK_SECRET,
-  },
-  workflow: {
-    profileAccessSecret: env.WORKFLOW_PROFILE_SECRET,
   },
   githubSource: {
     owner: env.GITHUB_SOURCE_OWNER,

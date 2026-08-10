@@ -1,12 +1,12 @@
 import { z } from "zod";
 
 const optionalSecret = z.string().max(4_096).optional();
-const httpUrl = z.string().url().max(500).refine((value) => value.startsWith("https://") || value.startsWith("http://"), "HTTP(S) URL required");
+const httpsUrl = z.string().url().max(500).refine((value) => value.startsWith("https://"), "HTTPS URL required");
 
 export const dashboardSettingsInputSchema = z.object({
-  reportPortalApiUrl: httpUrl,
+  reportPortalApiUrl: httpsUrl,
   reportPortalApiKey: optionalSecret,
-  testRailBaseUrl: httpUrl.optional().or(z.literal("")),
+  testRailBaseUrl: httpsUrl.optional().or(z.literal("")),
   testRailApiUser: z.string().trim().max(320).optional(),
   testRailApiKey: optionalSecret,
   defaultProject: z.string().trim().min(1).max(100),
@@ -17,12 +17,12 @@ export const dashboardSettingsInputSchema = z.object({
 
 export const cypressProfileInputSchema = z.object({
   name: z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9_. -]+$/),
-  baseUrl: httpUrl,
-  okapiHost: httpUrl,
+  baseUrl: httpsUrl,
+  okapiHost: httpsUrl,
   tenant: z.string().trim().min(1).max(100),
   login: z.string().trim().min(1).max(200),
   password: optionalSecret,
-  edgeHost: httpUrl.optional().or(z.literal("")),
+  edgeHost: httpsUrl.optional().or(z.literal("")),
   edgeApiKey: optionalSecret,
   rtrAuth: z.boolean().default(false),
   ecsEnabled: z.boolean().default(false),

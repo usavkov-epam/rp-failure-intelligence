@@ -63,7 +63,7 @@ Both allowlists are comma-separated. The allowlist selected by the active mode m
 
 Create one or more named Cypress profiles in **Settings**, then select failure rows and choose **Run selected**. A profile stores FOLIO `baseUrl`, Okapi/Kong URL, tenant, login/password, and supported ECS/Eureka options in Supabase Vault. Advanced options can override bounded, non-secret Cypress settings such as viewport, Cypress timeouts, retries, video, and failure screenshots.
 
-At dispatch, the server creates a one-hour, one-time Vault snapshot. The workflow retrieves it from `/api/workflow/cypress-profile` using the repository-only `DASHBOARD_PROFILE_ACCESS_TOKEN`; secret values never enter workflow inputs, logs, summaries, or artifacts. The workflow then writes ephemeral `environments.js`, runs `cypress:repeat`, and deletes the downloaded profile payload.
+At dispatch, the server creates a one-hour, one-time Vault snapshot. The workflow retrieves it from `/api/workflow/cypress-profile` using a short-lived GitHub Actions OIDC identity token bound to the configured repository, workflow, branch, event, and GitHub-hosted runner. No reusable profile-delivery credential is stored. Secret values never enter workflow inputs, summaries, or artifacts, and runtime credentials are registered for log masking before Cypress starts. The workflow writes mode-`0600` `environments.js`, runs `cypress:repeat`, and removes credential files even when the test step fails. Supabase deletes a consumed snapshot atomically and purges expired unclaimed snapshots every 15 minutes.
 
 The authenticated **Runs** page at `/runs` loads the GitHub user's 20 most recent runs from Supabase. GitHub sends signed `workflow_run` webhooks when a run is queued, starts, or completes. The webhook updates the durable row and publishes an opaque Supabase Realtime Broadcast; the open Runs page then reloads the authenticated list once and shows a completion toast. There is no timer polling. The page displays state, conclusion, duration, selected specs, runner settings, and artifact availability. Use **Actions** to inspect logs and download artifacts.
 
@@ -74,13 +74,12 @@ Configure these server-only values for the dashboard:
 - `GITHUB_ACTIONS_TOKEN`: fine-grained token with **Actions: Read and write** for `usavkov-epam/rp-failure-intelligence`; write dispatches workflows and read retrieves run and artifact status.
 - `GITHUB_ACTIONS_OWNER`, `GITHUB_ACTIONS_REPO`, `GITHUB_ACTIONS_WORKFLOW`, and `GITHUB_ACTIONS_REF`: dispatch destination, with defaults shown in `.env.example`.
 - `GITHUB_WEBHOOK_SECRET`: shared HMAC secret configured both in Vercel and the repository's `workflow_run` webhook.
-- `WORKFLOW_PROFILE_SECRET`: dashboard copy of the workflow-only profile delivery credential.
 - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`: public Realtime connection settings.
 - `SUPABASE_SERVICE_ROLE_KEY`: server-only database and broadcast credential.
 
 All three Supabase variables must be configured together. Apply the migration under `supabase/migrations/` before enabling run dispatch. The table has RLS enabled and intentionally defines no browser policies.
 
-Configure GitHub Actions variable `DASHBOARD_BASE_URL` and secret `DASHBOARD_PROFILE_ACCESS_TOKEN`. The secret must equal Vercel's `WORKFLOW_PROFILE_SECRET`. Remove the legacy `STRIPES_TESTING_ENVIRONMENTS_B64` secret only after the new workflow and migration are deployed successfully.
+Configure the GitHub Actions variable `DASHBOARD_BASE_URL`. The workflow requests a short-lived OIDC token with `id-token: write`; no profile-delivery Actions secret is required. During the one-release cutover, the workflow can fall back to the existing `DASHBOARD_PROFILE_ACCESS_TOKEN` only when the old dashboard rejects OIDC. After one OIDC-authenticated run succeeds, remove the legacy `DASHBOARD_PROFILE_ACCESS_TOKEN` and `STRIPES_TESTING_ENVIRONMENTS_B64` GitHub secrets and the `WORKFLOW_PROFILE_SECRET`, `RP_API_KEY`, `RP_API_URL`, `TESTRAIL_BASE_URL`, and `CYPRESS_ENVIRONMENT_NAMES` Vercel values; the fallback is then inactive and obsolete shared integration configuration is gone.
 
 ## GitHub Source Repository
 
@@ -93,7 +92,7 @@ Production is deployed to Vercel at [rp-failure-intelligence.vercel.app](https:/
 1. Configure all values from `.env.example` in the Vercel project. ReportPortal, TestRail, and Cypress user credentials are not deployment variables.
 2. Apply the Supabase migrations and enable Realtime for the project.
 3. Configure a GitHub repository webhook with payload URL `https://<dashboard-host>/api/webhooks/github`, content type `application/json`, the same `GITHUB_WEBHOOK_SECRET`, and only the **Workflow runs** event.
-4. Configure `DASHBOARD_BASE_URL` as an Actions variable and `DASHBOARD_PROFILE_ACCESS_TOKEN` as an Actions secret matching `WORKFLOW_PROFILE_SECRET`.
+4. Configure `DASHBOARD_BASE_URL` as an Actions variable. GitHub OIDC authenticates profile retrieval without a reusable secret.
 5. Run `pnpm check` and deploy with `pnpm dlx vercel@latest --prod`.
 6. Set the production OAuth App homepage and callback to the deployed HTTPS origin.
 
@@ -108,4 +107,5 @@ OpenNext and Wrangler scripts remain in the repository for optional Cloudflare e
 - The source repository and ref are fixed by deployment configuration, not accepted from browser requests.
 - GitHub Actions dispatch accepts only authenticated, validated, bounded selected-spec requests; no source-repository mutation API is exposed.
 - Supabase stores run metadata plus user-owned configuration. API and test credentials are authenticated-encrypted in Vault; browser roles have no table or Vault access.
+- User-configured integration and Cypress endpoints must use HTTPS.
 - `.env`, `.env.local`, and Vercel's local project metadata are ignored. Never commit credentials or generated environment files.

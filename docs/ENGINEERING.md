@@ -81,7 +81,7 @@ flowchart LR
 | `src/lib/cypress-run-store.ts` | Persistence boundary | Service-role run storage, user-scoped listing, updates, HMAC channel names, and Broadcast publishing |
 | `src/lib/cypress-run-request.ts` | Validation boundary | Selected spec paths and bounded runner settings |
 | `src/lib/user-settings.ts` | Secret/configuration boundary | Owner-scoped metadata, Supabase Vault operations, profiles, and one-time run snapshots |
-| `src/lib/user-settings-schema.ts` | Validation boundary | HTTP(S)-only integration settings and supported Cypress profile fields |
+| `src/lib/user-settings-schema.ts` | Validation boundary | HTTPS-only integration settings and supported Cypress profile fields |
 | `src/lib/analytics.ts` | Domain logic | Convert ReportPortal history into rows, trends, metrics, and risk categories |
 | `src/lib/types.ts` | Internal contracts | Dashboard DTOs, ReportPortal response shapes, report selection types |
 | `src/components/Dashboard.tsx` | Client UI | Selectors, filters, DataGrid, links, metrics, empty states, and error toasts |
@@ -253,7 +253,6 @@ All secrets are server-only. No secret may use a `NEXT_PUBLIC_` prefix.
 | `GITHUB_ACTIONS_WORKFLOW` | No | No | Selected-spec workflow filename |
 | `GITHUB_ACTIONS_REF` | No | No | Workflow ref |
 | `GITHUB_WEBHOOK_SECRET` | For run updates | Yes | Verifies GitHub `workflow_run` HMAC signatures |
-| `WORKFLOW_PROFILE_SECRET` | For Cypress profiles | Yes | Matches the repository's `DASHBOARD_PROFILE_ACCESS_TOKEN` Actions secret |
 | `NEXT_PUBLIC_SUPABASE_URL` | With run tracking | No | Supabase project URL; required with the other two Supabase values |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | With run tracking | No | Public key used only for opaque Broadcast subscriptions; required with the other two Supabase values |
 | `SUPABASE_SERVICE_ROLE_KEY` | With run tracking | Yes | Server-only database and broadcast access; required with the other two Supabase values |
@@ -272,8 +271,12 @@ The three Supabase values are optional only as a group: if any one is present, c
 - Browser roles receive no policies or grants for settings, profiles, run snapshots, or Vault. All access passes through authenticated Next.js routes using the service role and an explicit owner filter.
 - Supabase Vault encrypts secret JSON with authenticated encryption and keeps its project root key separate from database data and backups.
 - GET responses return editable non-secret fields and `has...` flags only. Stored API keys and passwords are never returned.
-- A Cypress dispatch copies the selected profile into a one-hour Vault secret. An atomic SQL claim makes the snapshot one-time; the app deletes the Vault value immediately after retrieval.
-- The workflow access token is infrastructure-only. It can retrieve only an unexpired request UUID snapshot and is never accepted for dashboard settings or run history.
+- User-provided ReportPortal, TestRail, FOLIO, Okapi/Kong, and Edge endpoints must use HTTPS.
+- A Cypress dispatch copies the selected profile into a one-hour Vault secret. An atomic SQL consume operation returns the snapshot once while deleting its row and Vault value in the same transaction. Supabase Cron purges expired unclaimed snapshots and Vault values every 15 minutes.
+- The workflow presents a short-lived GitHub Actions OIDC token. The server verifies its signature, issuer, audience, repository, owner, workflow ref, branch, dispatch event, and GitHub-hosted runner before releasing a snapshot. No reusable profile-delivery secret is stored.
+- The workflow retains a one-release fallback reference to `DASHBOARD_PROFILE_ACCESS_TOKEN` solely so the new workflow can coexist with the previous dashboard during deployment. Delete that GitHub secret after the first successful OIDC-authenticated run to deactivate the fallback.
+- After the OIDC cutover, remove obsolete shared GitHub/Vercel profile and integration values. User-owned Vault settings are the only supported ReportPortal, TestRail, and Cypress configuration source.
+- Retrieved Cypress passwords and API keys are registered with GitHub's log masker before tests start. Credential files use mode `0600`, are excluded from artifacts, and are removed by an `always()` cleanup step.
 
 ## Local Development
 
@@ -308,7 +311,7 @@ Override the script explicitly only for a deliberate alternate OAuth App configu
 
 - Use TypeScript and preserve strict internal contracts.
 - Keep server credentials and third-party API calls in server-only modules.
-- Validate all URL and environment input with Zod at a server boundary.
+- Validate all URL and environment input with Zod at a server boundary and require HTTPS for credential-bearing integrations.
 - Prefer small, explicit functions over speculative abstractions.
 - Keep changes scoped to the owning layer.
 - Do not add repository mutation or test-execution behavior without an explicit architecture decision.
@@ -349,7 +352,7 @@ Override the script explicitly only for a deliberate alternate OAuth App configu
 - Validate selected specs as repository-relative Cypress paths and bound spec count, repetitions, threads, browser, and timeout before dispatch.
 - Resolve Cypress profile IDs only within the authenticated immutable owner key. Keep profile contents in Supabase Vault and out of workflow inputs.
 - Restrict UI-provided Cypress configuration to the bounded non-secret allowlist in `cypress-run-request.ts`; validate it again inside the workflow.
-- Keep `GITHUB_ACTIONS_TOKEN`, `WORKFLOW_PROFILE_SECRET`, and `DASHBOARD_PROFILE_ACCESS_TOKEN` server/workflow-only.
+- Keep `GITHUB_ACTIONS_TOKEN` server-only. Authenticate Cypress profile retrieval with the narrowly validated GitHub Actions OIDC identity.
 - Keep `SUPABASE_SERVICE_ROLE_KEY` and `GITHUB_WEBHOOK_SECRET` server-only. Do not add browser table policies for `cypress_runs`.
 - Keep GitHub source repository configuration server-controlled.
 - Maintain fail-closed authorization when the selected organization or user authorization rule cannot be verified.
@@ -387,7 +390,7 @@ Production deployment uses Vercel:
 1. Configure a production GitHub OAuth App with the deployed HTTPS origin and callback.
 2. Configure secrets and non-secret variables from `.env.example` in the Vercel project.
 3. Apply `supabase/migrations` to the linked Supabase project.
-4. Configure the repository's `workflow_run` webhook, `DASHBOARD_BASE_URL` variable, and `DASHBOARD_PROFILE_ACCESS_TOKEN` secret.
+4. Configure the repository's `workflow_run` webhook and `DASHBOARD_BASE_URL` variable. The workflow needs `id-token: write` for OIDC profile retrieval.
 5. Run `pnpm check`.
 6. Deploy with `pnpm dlx vercel@latest --prod`.
 7. Verify sign-in, authorization rejection, ReportPortal live/empty/error states, source links, dispatch, `/runs`, webhook updates, and artifact links.

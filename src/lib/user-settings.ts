@@ -239,6 +239,8 @@ export async function removeCypressProfile(ownerKey: string, profileId: string) 
 }
 
 export async function createRunProfileSnapshot(requestId: string, snapshot: RunProfileSnapshot) {
+  const { error: purgeError } = await getClient().rpc("purge_expired_cypress_run_profiles");
+  if (purgeError) throw new Error(`Unable to purge expired Cypress profiles: ${purgeError.message}`);
   const secretId = await createSecret(snapshot, `run:${requestId}`, "Short-lived Cypress run profile");
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
   const { error } = await getClient().from("cypress_run_profiles").insert({ request_id: requestId, secret_id: secretId, expires_at: expiresAt });
@@ -249,12 +251,7 @@ export async function createRunProfileSnapshot(requestId: string, snapshot: RunP
 }
 
 export async function consumeRunProfileSnapshot(requestId: string) {
-  const client = getClient();
-  const { data, error } = await client.rpc("claim_cypress_run_profile", { run_request_id: requestId });
+  const { data, error } = await getClient().rpc("consume_cypress_run_profile", { run_request_id: requestId });
   if (error) throw new Error(`Unable to load Cypress run profile: ${error.message}`);
-  if (!data) return null;
-  const secretId = String(data);
-  const snapshot = await readSecret<RunProfileSnapshot>(secretId);
-  await deleteSecret(secretId);
-  return snapshot;
+  return typeof data === "string" ? JSON.parse(data) as RunProfileSnapshot : null;
 }

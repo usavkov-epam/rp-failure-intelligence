@@ -40,6 +40,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: cypress-selected-${{ inputs.request_id }}
@@ -123,22 +124,59 @@ jobs:
 
       - name: Configure Cypress environment
         env:
-          PROFILE_ACCESS_TOKEN: ${{ secrets.DASHBOARD_PROFILE_ACCESS_TOKEN }}
+          # One-release cutover fallback. Remove this repository secret after OIDC succeeds in production.
+          LEGACY_PROFILE_ACCESS_TOKEN: ${{ secrets.DASHBOARD_PROFILE_ACCESS_TOKEN }}
         run: |
-          if [[ -z "$PROFILE_ACCESS_TOKEN" || -z "$DASHBOARD_BASE_URL" ]]; then
+          if [[ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" || -z "$ACTIONS_ID_TOKEN_REQUEST_URL" || -z "$DASHBOARD_BASE_URL" ]]; then
             echo "Missing dashboard profile delivery configuration" >&2
             exit 1
           fi
-          curl --fail --silent --show-error \
-            --header "Authorization: Bearer $PROFILE_ACCESS_TOKEN" \
+          OIDC_TOKEN="$(node <<'NODE'
+          (async () => {
+            const audience = 'rp-failure-intelligence:cypress-profile';
+            const url = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);
+            url.searchParams.set('audience', audience);
+            const response = await fetch(url, {
+              headers: { Authorization: `Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
+            });
+            if (!response.ok) throw new Error(`Unable to obtain GitHub OIDC token: ${response.status}`);
+            const body = await response.json();
+            if (typeof body.value !== 'string') throw new Error('GitHub OIDC token response is invalid');
+            process.stdout.write(body.value);
+          })().catch((error) => {
+            console.error(error instanceof Error ? error.message : 'Unable to obtain GitHub OIDC token');
+            process.exitCode = 1;
+          });
+          NODE
+          )"
+          echo "::add-mask::$OIDC_TOKEN"
+          PROFILE_STATUS="$(curl --silent --show-error \
+            --header "Authorization: Bearer $OIDC_TOKEN" \
             "$DASHBOARD_BASE_URL/api/workflow/cypress-profile?requestId=$REQUEST_ID" \
-            --output run-profile.json
+            --output run-profile.json \
+            --write-out '%{http_code}')"
+          if [[ "$PROFILE_STATUS" == "401" && -n "$LEGACY_PROFILE_ACCESS_TOKEN" ]]; then
+            PROFILE_STATUS="$(curl --silent --show-error \
+              --header "Authorization: Bearer $LEGACY_PROFILE_ACCESS_TOKEN" \
+              "$DASHBOARD_BASE_URL/api/workflow/cypress-profile?requestId=$REQUEST_ID" \
+              --output run-profile.json \
+              --write-out '%{http_code}')"
+          fi
+          if [[ "$PROFILE_STATUS" != "200" ]]; then
+            echo "Unable to retrieve Cypress profile: dashboard returned $PROFILE_STATUS" >&2
+            exit 1
+          fi
           chmod 600 run-profile.json
           node <<'NODE'
           const fs = require('node:fs');
           const snapshot = JSON.parse(fs.readFileSync('run-profile.json', 'utf8'));
           if (!snapshot || !/^[A-Za-z0-9_. -]{1,80}$/.test(snapshot.name) || !snapshot.environment) {
             throw new Error('Invalid Cypress profile response');
+          }
+          const escapeWorkflowCommand = (value) => String(value).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+          for (const key of ['diku_password', 'EDGE_API_KEY']) {
+            const secret = snapshot.environment.env?.[key];
+            if (typeof secret === 'string' && secret) process.stdout.write(`::add-mask::${escapeWorkflowCommand(secret)}\n`);
           }
           const environmentKey = snapshot.name.replaceAll(' ', '-');
           fs.writeFileSync('environments.js', `module.exports = ${JSON.stringify({
@@ -161,6 +199,10 @@ jobs:
             --threads "$THREADS" \
             --browser "$BROWSER" \
             --timeout-sec "$TIMEOUT_SECONDS"
+
+      - name: Remove Cypress credentials
+        if: always()
+        run: rm -f run-profile.json environments.js
 
       - name: Upload Cypress results
         if: always()

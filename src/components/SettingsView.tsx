@@ -110,13 +110,13 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
         <Typography variant="h5">Dashboard integrations</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>ReportPortal is required. TestRail remains optional.</Typography>
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 2 }}>
-          <TextField label="ReportPortal API URL" value={dashboard.reportPortalApiUrl} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiUrl: event.target.value })} required />
+          <TextField label="ReportPortal API URL" type="url" helperText="HTTPS is required" value={dashboard.reportPortalApiUrl} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiUrl: event.target.value })} required />
           <TextField label={initialDashboardSettings?.hasReportPortalApiKey ? "ReportPortal API key (stored)" : "ReportPortal API key"} type="password" value={dashboard.reportPortalApiKey || ""} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiKey: event.target.value })} required={!initialDashboardSettings?.hasReportPortalApiKey} />
           <TextField label="Default project" value={dashboard.defaultProject} onChange={(event) => setDashboard({ ...dashboard, defaultProject: event.target.value })} required />
           <TextField label="Default launch name" value={dashboard.defaultLaunchName} onChange={(event) => setDashboard({ ...dashboard, defaultLaunchName: event.target.value })} required />
           <TextField label="Default team" value={dashboard.defaultTeam} onChange={(event) => setDashboard({ ...dashboard, defaultTeam: event.target.value })} required />
           <TextField select label="Default history depth" value={dashboard.defaultHistoryDepth} onChange={(event) => setDashboard({ ...dashboard, defaultHistoryDepth: Number(event.target.value) })}>{[5, 10, 15, 20, 30].map((value) => <MenuItem key={value} value={value}>{value} runs</MenuItem>)}</TextField>
-          <TextField label="TestRail base URL (optional)" value={dashboard.testRailBaseUrl || ""} onChange={(event) => setDashboard({ ...dashboard, testRailBaseUrl: event.target.value })} />
+          <TextField label="TestRail base URL (optional)" type="url" helperText="HTTPS is required when configured" value={dashboard.testRailBaseUrl || ""} onChange={(event) => setDashboard({ ...dashboard, testRailBaseUrl: event.target.value })} />
           <TextField label="TestRail API user (optional)" value={dashboard.testRailApiUser || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiUser: event.target.value })} />
           <TextField label={initialDashboardSettings?.hasTestRailApiKey ? "TestRail API key (stored)" : "TestRail API key (optional)"} type="password" value={dashboard.testRailApiKey || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiKey: event.target.value })} />
         </Box>
@@ -156,12 +156,12 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
       <DialogTitle>{editingId ? "Edit Cypress profile" : "New Cypress profile"}</DialogTitle>
       <DialogContent><Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 2, pt: 1 }}>
         <TextField label="Profile name" value={profile.name} onChange={(event) => setProfile({ ...profile, name: event.target.value })} required />
-        <TextField label="FOLIO base URL" value={profile.baseUrl} onChange={(event) => setProfile({ ...profile, baseUrl: event.target.value })} required />
-        <TextField label="Okapi / Kong URL" value={profile.okapiHost} onChange={(event) => setProfile({ ...profile, okapiHost: event.target.value })} required />
+        <TextField label="FOLIO base URL" type="url" helperText="HTTPS is required" value={profile.baseUrl} onChange={(event) => setProfile({ ...profile, baseUrl: event.target.value })} required />
+        <TextField label="Okapi / Kong URL" type="url" helperText="HTTPS is required" value={profile.okapiHost} onChange={(event) => setProfile({ ...profile, okapiHost: event.target.value })} required />
         <TextField label="Tenant" value={profile.tenant} onChange={(event) => setProfile({ ...profile, tenant: event.target.value })} required />
         <TextField label="Login" value={profile.login} onChange={(event) => setProfile({ ...profile, login: event.target.value })} required />
         <TextField label={editingId ? "Password (stored; blank keeps it)" : "Password"} type="password" value={profile.password || ""} onChange={(event) => setProfile({ ...profile, password: event.target.value })} required={!editingId} />
-        <TextField label="Edge URL (optional)" value={profile.edgeHost || ""} onChange={(event) => setProfile({ ...profile, edgeHost: event.target.value })} />
+        <TextField label="Edge URL (optional)" type="url" helperText="HTTPS is required when configured" value={profile.edgeHost || ""} onChange={(event) => setProfile({ ...profile, edgeHost: event.target.value })} />
         <TextField label={editingId ? "Edge API key (blank keeps stored value)" : "Edge API key (optional)"} type="password" value={profile.edgeApiKey || ""} onChange={(event) => setProfile({ ...profile, edgeApiKey: event.target.value })} />
         <TextField label="System role (optional)" value={profile.systemRoleName || ""} onChange={(event) => setProfile({ ...profile, systemRoleName: event.target.value })} />
         <TextField select label="ECS environment" value={profile.ecsEnvironment || ""} onChange={(event) => setProfile({ ...profile, ecsEnvironment: event.target.value ? event.target.value as "snapshot" | "sprint" : undefined })}><MenuItem value="">Not set</MenuItem><MenuItem value="snapshot">Snapshot</MenuItem><MenuItem value="sprint">Sprint</MenuItem></TextField>

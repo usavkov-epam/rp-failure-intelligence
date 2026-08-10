@@ -1,22 +1,19 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { config } from "@/lib/config";
+import { verifyGitHubActionsIdentity } from "@/lib/github-actions-oidc";
 import { consumeRunProfileSnapshot } from "@/lib/user-settings";
 
 const querySchema = z.string().uuid();
 
-function authorized(header: string | null) {
-  const secret = config.workflow.profileAccessSecret;
-  if (!secret || !header?.startsWith("Bearer ")) return false;
-  const provided = Buffer.from(header.slice(7));
-  const expected = Buffer.from(secret);
-  return provided.length === expected.length && timingSafeEqual(provided, expected);
-}
-
 export async function GET(request: Request) {
-  if (!authorized(request.headers.get("authorization"))) {
+  const authorization = request.headers.get("authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  try {
+    await verifyGitHubActionsIdentity(authorization.slice(7));
+  } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const parsed = querySchema.safeParse(new URL(request.url).searchParams.get("requestId"));
