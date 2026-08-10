@@ -34,6 +34,32 @@ function getSpecPath(codeRef?: string): string {
   return match?.[1] || "Spec path unavailable";
 }
 
+export function mergeCurrentFailuresWithHistory(
+  currentFailures: ReportPortalItem[],
+  history: HistoryEntry[],
+): HistoryEntry[] {
+  const currentFailureIds = new Set(currentFailures.map(({ id }) => id));
+  const historyByResourceId = new Map<number, HistoryEntry>();
+
+  history.forEach((entry) => {
+    entry.resources.forEach(({ id }) => historyByResourceId.set(id, entry));
+  });
+
+  return currentFailures.map((current) => {
+    const matched = historyByResourceId.get(current.id);
+    if (!matched) return { resources: [current] };
+
+    return {
+      resources: [
+        current,
+        ...matched.resources.filter((resource) => (
+          resource.id !== current.id && !currentFailureIds.has(resource.id)
+        )),
+      ],
+    };
+  });
+}
+
 export function analyzeHistory(
   history: HistoryEntry[],
   suiteItems: ReportPortalItem[],

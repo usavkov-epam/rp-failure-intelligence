@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeHistory } from "./analytics";
+import { analyzeHistory, mergeCurrentFailuresWithHistory } from "./analytics";
 import type { HistoryEntry, ReportPortalItem } from "./types";
 
 function item(
@@ -94,5 +94,36 @@ describe("analyzeHistory", () => {
       { launchNumber: 1, passed: 2, failed: 1, other: 0 },
       { launchNumber: 3, passed: 0, failed: 3, other: 0 },
     ]));
+  });
+});
+
+describe("mergeCurrentFailuresWithHistory", () => {
+  it("keeps every current failure when ReportPortal returns incomplete history", () => {
+    const currentWithHistory = item(301, "FAILED", 10);
+    const currentWithoutHistory = item(302, "FAILED", 10);
+    const previousExecution = item(201, "PASSED", 9);
+
+    const result = mergeCurrentFailuresWithHistory(
+      [currentWithHistory, currentWithoutHistory],
+      [
+        { resources: [currentWithHistory, previousExecution] },
+        { resources: [item(999, "FAILED", 10)] },
+      ],
+    );
+
+    expect(result).toEqual([
+      { resources: [currentWithHistory, previousExecution] },
+      { resources: [currentWithoutHistory] },
+    ]);
+  });
+
+  it("normalizes the current execution to the front of its history", () => {
+    const current = item(401, "FAILED", 10);
+    const previous = item(301, "PASSED", 9);
+
+    expect(mergeCurrentFailuresWithHistory(
+      [current],
+      [{ resources: [previous, current] }],
+    )).toEqual([{ resources: [current, previous] }]);
   });
 });

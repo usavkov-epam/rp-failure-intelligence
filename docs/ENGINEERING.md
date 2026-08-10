@@ -321,6 +321,7 @@ Override the script explicitly only for a deliberate alternate OAuth App configu
 - Treat non-2xx responses as errors and retain endpoint/status context.
 - Distinguish an empty successful response from a failed request.
 - Fetch history only when current failed items exist.
+- Treat the current failed-item response as the failure-row source of truth. Enrich it with matching history, and retain unmatched current failures as one-run rows because ReportPortal history can be incomplete.
 - Never substitute fixture or previous-launch data after a live failure.
 - Consider pagination whenever an endpoint can exceed its requested page size.
 
@@ -354,7 +355,7 @@ Run the complete repository check before merging:
 pnpm check
 ```
 
-It currently runs 15 Vitest tests in three files, ESLint, legacy script syntax checks, and a production Next.js build.
+It currently runs 17 Vitest tests in three files, ESLint, legacy script syntax checks, and a production Next.js build.
 
 For behavior changes, also validate the smallest relevant path:
 

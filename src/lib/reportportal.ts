@@ -1,6 +1,6 @@
 import "server-only";
 
-import { analyzeHistory } from "./analytics";
+import { analyzeHistory, mergeCurrentFailuresWithHistory } from "./analytics";
 import { config } from "./config";
 import { collectAllPages, type PageResult } from "./pagination";
 import type { DashboardData, HistoryEntry, ReportPortalItem, ReportSelection, ReportSourceOptions } from "./types";
@@ -211,13 +211,11 @@ async function loadLiveData(selection: ReportSelection): Promise<DashboardData> 
       "page.size": 1000,
     })
     : { content: [] };
-  if (history.content.length !== failed.content.length) {
-    throw new Error("ReportPortal history did not cover every current failed test");
-  }
+  const failureHistory = mergeCurrentFailuresWithHistory(failed.content, history.content);
 
   const reportPortalBaseUrl = new URL(apiUrl!).origin;
   return {
-    ...analyzeHistory(history.content, suite.content, reportPortalBaseUrl, project, launch.id, config.testRailBaseUrl),
+    ...analyzeHistory(failureHistory, suite.content, reportPortalBaseUrl, project, launch.id, config.testRailBaseUrl),
     meta: {
       project,
       launchName,
