@@ -79,7 +79,7 @@ Configure these server-only values for the dashboard:
 
 All three Supabase variables must be configured together. Apply the migration under `supabase/migrations/` before enabling run dispatch. The table has RLS enabled and intentionally defines no browser policies.
 
-Configure the GitHub Actions variable `DASHBOARD_BASE_URL`. The workflow requests a short-lived OIDC token with `id-token: write`; no profile-delivery Actions secret is required. During the one-release cutover, the workflow can fall back to the existing `DASHBOARD_PROFILE_ACCESS_TOKEN` only when the old dashboard rejects OIDC. After one OIDC-authenticated run succeeds, remove the legacy `DASHBOARD_PROFILE_ACCESS_TOKEN` and `STRIPES_TESTING_ENVIRONMENTS_B64` GitHub secrets and the `WORKFLOW_PROFILE_SECRET`, `RP_API_KEY`, `RP_API_URL`, `TESTRAIL_BASE_URL`, and `CYPRESS_ENVIRONMENT_NAMES` Vercel values; the fallback is then inactive and obsolete shared integration configuration is gone.
+Configure the GitHub Actions variable `DASHBOARD_BASE_URL`. The workflow requests a short-lived OIDC token with `id-token: write`; no profile-delivery Actions secret is required. ReportPortal, TestRail, and Cypress environment values are user-owned Vault configuration rather than shared GitHub or Vercel secrets.
 
 ## GitHub Source Repository
 

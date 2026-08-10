@@ -274,8 +274,7 @@ The three Supabase values are optional only as a group: if any one is present, c
 - User-provided ReportPortal, TestRail, FOLIO, Okapi/Kong, and Edge endpoints must use HTTPS.
 - A Cypress dispatch copies the selected profile into a one-hour Vault secret. An atomic SQL consume operation returns the snapshot once while deleting its row and Vault value in the same transaction. Supabase Cron purges expired unclaimed snapshots and Vault values every 15 minutes.
 - The workflow presents a short-lived GitHub Actions OIDC token. The server verifies its signature, issuer, audience, repository, owner, workflow ref, branch, dispatch event, and GitHub-hosted runner before releasing a snapshot. No reusable profile-delivery secret is stored.
-- The workflow retains a one-release fallback reference to `DASHBOARD_PROFILE_ACCESS_TOKEN` solely so the new workflow can coexist with the previous dashboard during deployment. Delete that GitHub secret after the first successful OIDC-authenticated run to deactivate the fallback.
-- After the OIDC cutover, remove obsolete shared GitHub/Vercel profile and integration values. User-owned Vault settings are the only supported ReportPortal, TestRail, and Cypress configuration source.
+- User-owned Vault settings are the only supported ReportPortal, TestRail, and Cypress configuration source; no shared GitHub/Vercel profile credential is used.
 - Retrieved Cypress passwords and API keys are registered with GitHub's log masker before tests start. Credential files use mode `0600`, are excluded from artifacts, and are removed by an `always()` cleanup step.
 
 ## Local Development

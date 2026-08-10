@@ -123,9 +123,6 @@ jobs:
           NODE
 
       - name: Configure Cypress environment
-        env:
-          # One-release cutover fallback. Remove this repository secret after OIDC succeeds in production.
-          LEGACY_PROFILE_ACCESS_TOKEN: ${{ secrets.DASHBOARD_PROFILE_ACCESS_TOKEN }}
         run: |
           if [[ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" || -z "$ACTIONS_ID_TOKEN_REQUEST_URL" || -z "$DASHBOARD_BASE_URL" ]]; then
             echo "Missing dashboard profile delivery configuration" >&2
@@ -155,13 +152,6 @@ jobs:
             "$DASHBOARD_BASE_URL/api/workflow/cypress-profile?requestId=$REQUEST_ID" \
             --output run-profile.json \
             --write-out '%{http_code}')"
-          if [[ "$PROFILE_STATUS" == "401" && -n "$LEGACY_PROFILE_ACCESS_TOKEN" ]]; then
-            PROFILE_STATUS="$(curl --silent --show-error \
-              --header "Authorization: Bearer $LEGACY_PROFILE_ACCESS_TOKEN" \
-              "$DASHBOARD_BASE_URL/api/workflow/cypress-profile?requestId=$REQUEST_ID" \
-              --output run-profile.json \
-              --write-out '%{http_code}')"
-          fi
           if [[ "$PROFILE_STATUS" != "200" ]]; then
             echo "Unable to retrieve Cypress profile: dashboard returned $PROFILE_STATUS" >&2
             exit 1
