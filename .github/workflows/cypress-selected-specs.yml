@@ -222,14 +222,22 @@ jobs:
       - name: Run metadata
         if: always()
         run: |
-          {
-            echo "### Cypress selected specs"
-            echo "- Requested by: $REQUESTED_BY"
-            echo "- Request ID: $REQUEST_ID"
-            echo "- Specs: $(wc -l < selected-specs.txt 2>/dev/null || echo 0)"
-            echo "- Runs per spec: $RUNS"
-            echo "- Threads: $THREADS"
-            echo "- Browser: $BROWSER"
-            echo "- Cypress profile: $(node -e 'console.log(require("./run-config.json").profile)')"
-            echo "- Cypress overrides: $(node -e \"const c=require('./run-config.json').cypressConfig; console.log(Object.keys(c).join(', ') || 'none')\")"
-          } >> "$GITHUB_STEP_SUMMARY"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const runConfig = JSON.parse(fs.readFileSync('run-config.json', 'utf8'));
+          const specCount = fs.existsSync('selected-specs.txt')
+            ? fs.readFileSync('selected-specs.txt', 'utf8').split('\n').filter(Boolean).length
+            : 0;
+          const lines = [
+            '### Cypress selected specs',
+            `- Requested by: ${process.env.REQUESTED_BY}`,
+            `- Request ID: ${process.env.REQUEST_ID}`,
+            `- Specs: ${specCount}`,
+            `- Runs per spec: ${process.env.RUNS}`,
+            `- Threads: ${process.env.THREADS}`,
+            `- Browser: ${process.env.BROWSER}`,
+            `- Cypress profile: ${runConfig.profile || 'unavailable'}`,
+            `- Cypress overrides: ${Object.keys(runConfig.cypressConfig || {}).join(', ') || 'none'}`,
+          ];
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
+          NODE
