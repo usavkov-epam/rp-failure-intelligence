@@ -9,6 +9,7 @@ import type { CypressRunRecord, CypressRunState } from "./types";
 
 interface CypressRunRow {
   request_id: string;
+  owner_key: string | null;
   requested_by: string;
   specs: string[];
   runs: number;
@@ -65,28 +66,33 @@ function toRecord(row: CypressRunRow): CypressRunRecord {
   };
 }
 
-export function getRunChannel(requestedBy: string) {
+export function getRunChannel(ownerKey: string) {
   const digest = createHmac("sha256", config.auth.notificationSecret)
-    .update(requestedBy.toLowerCase())
+    .update(ownerKey)
     .digest("hex");
   return `cypress-runs:${digest}`;
 }
 
 export async function createCypressRun(
   requestId: string,
+  ownerKey: string,
   requestedBy: string,
   request: CypressRunRequest,
   actionsUrl: string,
+  profile: { id: string; name: string },
 ) {
   const { data, error } = await getClient().from("cypress_runs").insert({
     request_id: requestId,
+    owner_key: ownerKey,
     requested_by: requestedBy,
     specs: request.specs,
     runs: request.runs,
     threads: request.threads,
     browser: request.browser,
     timeout_seconds: request.timeoutSeconds,
-    environment: request.environment || null,
+    environment: profile.name,
+    profile_id: profile.id,
+    profile_name: profile.name,
     cypress_config: request.cypressConfig,
     actions_url: actionsUrl,
   }).select().single();
@@ -95,11 +101,11 @@ export async function createCypressRun(
   return toRecord(data as CypressRunRow);
 }
 
-export async function listCypressRuns(requestedBy: string) {
+export async function listCypressRuns(ownerKey: string) {
   const { data, error } = await getClient()
     .from("cypress_runs")
     .select("*")
-    .ilike("requested_by", requestedBy)
+    .eq("owner_key", ownerKey)
     .order("created_at", { ascending: false })
     .limit(20);
 
@@ -138,13 +144,13 @@ export async function updateCypressRun(requestId: string, update: {
     completed_at: update.completedAt,
     artifact_names: update.artifactNames,
     updated_at: new Date().toISOString(),
-  }).eq("request_id", requestId).select("requested_by").maybeSingle();
+  }).eq("request_id", requestId).select("owner_key").maybeSingle();
 
   if (error) throw new Error(`Unable to update Cypress run: ${error.message}`);
-  return data?.requested_by as string | undefined;
+  return data?.owner_key as string | undefined;
 }
 
-export async function broadcastRunChange(requestedBy: string, requestId: string) {
+export async function broadcastRunChange(ownerKey: string, requestId: string) {
   const { url, serviceRoleKey } = getSupabaseConfig();
   const response = await fetch(`${url}/realtime/v1/api/broadcast`, {
     method: "POST",
@@ -155,7 +161,7 @@ export async function broadcastRunChange(requestedBy: string, requestId: string)
     },
     body: JSON.stringify({
       messages: [{
-        topic: getRunChannel(requestedBy),
+        topic: getRunChannel(ownerKey),
         event: "cypress_run_changed",
         payload: { requestId },
         private: false,

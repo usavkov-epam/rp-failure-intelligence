@@ -61,7 +61,7 @@ export async function POST(request: Request) {
   const artifactNames = status === "completed"
     ? await loadCypressArtifacts(payload.workflow_run.id)
     : [];
-  const requestedBy = await updateCypressRun(requestId, {
+  const ownerKey = await updateCypressRun(requestId, {
     status,
     conclusion: payload.workflow_run.conclusion,
     githubRunId: payload.workflow_run.id,
@@ -72,6 +72,6 @@ export async function POST(request: Request) {
     artifactNames,
   });
 
-  if (requestedBy) await broadcastRunChange(requestedBy, requestId);
-  return NextResponse.json({ accepted: true, updated: Boolean(requestedBy) });
+  if (ownerKey) await broadcastRunChange(ownerKey, requestId);
+  return NextResponse.json({ accepted: true, updated: Boolean(ownerKey) });
 }

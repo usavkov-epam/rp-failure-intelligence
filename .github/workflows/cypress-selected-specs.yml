@@ -32,11 +32,6 @@ on:
         description: Per-run timeout in seconds
         required: true
         type: string
-      environment:
-        description: environments.js profile name; empty uses its configured default
-        required: false
-        default: ""
-        type: string
       cypress_config:
         description: Validated JSON object containing non-secret Cypress configuration overrides
         required: false
@@ -60,11 +55,11 @@ jobs:
       THREADS: ${{ inputs.threads }}
       BROWSER: ${{ inputs.browser }}
       TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
-      SELECTED_ENVIRONMENT: ${{ inputs.environment }}
       DASHBOARD_CYPRESS_CONFIG_JSON: ${{ inputs.cypress_config }}
       REQUEST_ID: ${{ inputs.request_id }}
       REQUESTED_BY: ${{ inputs.requested_by }}
       STRIPES_TESTING_REF: master
+      DASHBOARD_BASE_URL: ${{ vars.DASHBOARD_BASE_URL }}
       NO_COLOR: "1"
     steps:
       - name: Check out stripes-testing
@@ -97,9 +92,6 @@ jobs:
             if (!Number.isInteger(number) || number < minimum || number > maximum) throw new Error(`Invalid ${name}`);
           }
           if (!['chrome', 'electron'].includes(process.env.BROWSER)) throw new Error('Invalid browser');
-          if (process.env.SELECTED_ENVIRONMENT && !/^[A-Za-z0-9_.-]{1,80}$/.test(process.env.SELECTED_ENVIRONMENT)) {
-            throw new Error('Invalid Cypress environment');
-          }
           const rules = {
             viewportWidth: ['CYPRESS_VIEWPORT_WIDTH', 320, 3840, 'number'],
             viewportHeight: ['CYPRESS_VIEWPORT_HEIGHT', 320, 2160, 'number'],
@@ -125,37 +117,37 @@ jobs:
           }
           fs.writeFileSync('selected-specs.txt', `${[...new Set(specs)].join('\n')}\n`);
           fs.writeFileSync('run-config.json', `${JSON.stringify({
-            environment: process.env.SELECTED_ENVIRONMENT || null,
             cypressConfig,
           }, null, 2)}\n`);
           NODE
 
       - name: Configure Cypress environment
         env:
-          ENVIRONMENTS_B64: ${{ secrets.STRIPES_TESTING_ENVIRONMENTS_B64 }}
+          PROFILE_ACCESS_TOKEN: ${{ secrets.DASHBOARD_PROFILE_ACCESS_TOKEN }}
         run: |
-          if [[ -z "$ENVIRONMENTS_B64" ]]; then
-            echo "Missing STRIPES_TESTING_ENVIRONMENTS_B64 repository secret" >&2
+          if [[ -z "$PROFILE_ACCESS_TOKEN" || -z "$DASHBOARD_BASE_URL" ]]; then
+            echo "Missing dashboard profile delivery configuration" >&2
             exit 1
           fi
-          printf '%s' "$ENVIRONMENTS_B64" | base64 --decode > environments.js
-          chmod 600 environments.js
-
-      - name: Select Cypress environment
-        run: |
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $PROFILE_ACCESS_TOKEN" \
+            "$DASHBOARD_BASE_URL/api/workflow/cypress-profile?requestId=$REQUEST_ID" \
+            --output run-profile.json
+          chmod 600 run-profile.json
           node <<'NODE'
           const fs = require('node:fs');
-          const path = require('node:path');
-          const environmentsPath = path.resolve('environments.js');
-          const configuration = require(environmentsPath);
-          const activeEnvironment = process.env.SELECTED_ENVIRONMENT || configuration.activeEnvironment || null;
-          if (activeEnvironment && !Object.hasOwn(configuration.environments || {}, activeEnvironment)) {
-            throw new Error(`Cypress environment profile is unavailable: ${activeEnvironment}`);
+          const snapshot = JSON.parse(fs.readFileSync('run-profile.json', 'utf8'));
+          if (!snapshot || !/^[A-Za-z0-9_. -]{1,80}$/.test(snapshot.name) || !snapshot.environment) {
+            throw new Error('Invalid Cypress profile response');
           }
-          fs.writeFileSync(environmentsPath, `module.exports = ${JSON.stringify({
-            ...configuration,
-            activeEnvironment,
+          const environmentKey = snapshot.name.replaceAll(' ', '-');
+          fs.writeFileSync('environments.js', `module.exports = ${JSON.stringify({
+            activeEnvironment: environmentKey,
+            environments: { [environmentKey]: snapshot.environment },
           }, null, 2)};\n`, { mode: 0o600 });
+          const runConfig = JSON.parse(fs.readFileSync('run-config.json', 'utf8'));
+          fs.writeFileSync('run-config.json', `${JSON.stringify({ ...runConfig, profile: snapshot.name }, null, 2)}\n`);
+          fs.rmSync('run-profile.json');
           NODE
 
       - name: Install dependencies
@@ -196,6 +188,6 @@ jobs:
             echo "- Runs per spec: $RUNS"
             echo "- Threads: $THREADS"
             echo "- Browser: $BROWSER"
-            echo "- Environment: ${SELECTED_ENVIRONMENT:-configured default}"
+            echo "- Cypress profile: $(node -e 'console.log(require("./run-config.json").profile)')"
             echo "- Cypress overrides: $(node -e \"const c=require('./run-config.json').cypressConfig; console.log(Object.keys(c).join(', ') || 'none')\")"
           } >> "$GITHUB_STEP_SUMMARY"

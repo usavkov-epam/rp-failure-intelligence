@@ -21,17 +21,14 @@ const environmentSchema = z.object({
   GITHUB_ACTIONS_REPO: z.string().min(1).default("rp-failure-intelligence"),
   GITHUB_ACTIONS_WORKFLOW: z.string().min(1).default("cypress-selected-specs.yml"),
   GITHUB_ACTIONS_REF: z.string().min(1).default("main"),
-  CYPRESS_ENVIRONMENT_NAMES: commaSeparatedList,
   GITHUB_WEBHOOK_SECRET: z.string().min(32).optional(),
+  WORKFLOW_PROFILE_SECRET: z.string().min(32).optional(),
   GITHUB_SOURCE_OWNER: z.string().min(1).default("folio-org"),
   GITHUB_SOURCE_REPO: z.string().min(1).default("stripes-testing"),
   GITHUB_SOURCE_REF: z.string().min(1).default("master"),
-  RP_API_URL: optionalUrl,
-  RP_API_KEY: z.string().min(1).optional(),
   NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
-  TESTRAIL_BASE_URL: optionalUrl,
 }).superRefine((env, context) => {
   const allowlist = env.AUTHORIZATION_MODE === "organization" ? env.AUTH_ALLOWED_ORGS : env.AUTH_ALLOWED_USERS;
   if (!allowlist.length) {
@@ -74,25 +71,20 @@ export const config = {
     workflow: env.GITHUB_ACTIONS_WORKFLOW,
     ref: env.GITHUB_ACTIONS_REF,
   },
-  cypress: {
-    environmentNames: env.CYPRESS_ENVIRONMENT_NAMES,
-  },
   githubWebhook: {
     secret: env.GITHUB_WEBHOOK_SECRET,
+  },
+  workflow: {
+    profileAccessSecret: env.WORKFLOW_PROFILE_SECRET,
   },
   githubSource: {
     owner: env.GITHUB_SOURCE_OWNER,
     repository: env.GITHUB_SOURCE_REPO,
     ref: env.GITHUB_SOURCE_REF,
   },
-  reportPortal: {
-    apiUrl: env.RP_API_URL?.replace(/\/$/, ""),
-    apiKey: env.RP_API_KEY,
-  },
   supabase: {
     url: env.NEXT_PUBLIC_SUPABASE_URL,
     anonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
   },
-  testRailBaseUrl: env.TESTRAIL_BASE_URL?.replace(/\/$/, ""),
 } as const;

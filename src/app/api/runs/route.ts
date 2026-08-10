@@ -4,20 +4,18 @@ import { getAuthorizedSession } from "@/auth";
 import { cypressRunRequestSchema } from "@/lib/cypress-run-request";
 import { dispatchCypressRun } from "@/lib/cypress-runs";
 import { createCypressRun, failCypressRunDispatch, getRunChannel, listCypressRuns } from "@/lib/cypress-run-store";
-
-function getRequestedBy(session: Awaited<ReturnType<typeof getAuthorizedSession>>) {
-  return session?.user.githubLogin || session?.user.name || "authorized-user";
-}
+import { getRequestedBy, getUserOwnerKey } from "@/lib/user-identity";
+import { createRunProfileSnapshot, getCypressProfileSecret } from "@/lib/user-settings";
 
 export async function GET() {
   const session = await getAuthorizedSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const requestedBy = getRequestedBy(session);
+    const ownerKey = getUserOwnerKey(session);
     return NextResponse.json({
-      runs: await listCypressRuns(requestedBy),
-      channel: getRunChannel(requestedBy),
+      runs: await listCypressRuns(ownerKey),
+      channel: getRunChannel(ownerKey),
     });
   } catch (error) {
     console.error("Unable to load Cypress runs", error);
@@ -36,14 +34,18 @@ export async function POST(request: Request) {
 
   const requestId = crypto.randomUUID();
   const requestedBy = getRequestedBy(session);
+  const ownerKey = getUserOwnerKey(session);
   const configuration = (await import("@/lib/config")).config;
-  if (parsed.data.environment && !configuration.cypress.environmentNames.includes(parsed.data.environment)) {
-    return NextResponse.json({ error: "Cypress environment is not allowed" }, { status: 400 });
-  }
   const { owner, repository, workflow } = configuration.githubActions;
   const actionsUrl = `https://github.com/${owner}/${repository}/actions/workflows/${workflow}`;
   try {
-    const run = await createCypressRun(requestId, requestedBy, parsed.data, actionsUrl);
+    const selectedProfile = await getCypressProfileSecret(ownerKey, parsed.data.profileId);
+    if (!selectedProfile) return NextResponse.json({ error: "Cypress profile was not found" }, { status: 404 });
+    const run = await createCypressRun(requestId, ownerKey, requestedBy, parsed.data, actionsUrl, {
+      id: selectedProfile.profile.id,
+      name: selectedProfile.profile.name,
+    });
+    await createRunProfileSnapshot(requestId, { name: selectedProfile.profile.name, environment: selectedProfile.environment });
     await dispatchCypressRun(requestId, parsed.data, requestedBy);
     return NextResponse.json({ requestId, actionsUrl, run }, { status: 202 });
   } catch (error) {

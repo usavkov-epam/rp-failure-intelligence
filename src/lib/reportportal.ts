@@ -1,7 +1,6 @@
 import "server-only";
 
 import { analyzeHistory, mergeCurrentFailuresWithHistory } from "./analytics";
-import { config } from "./config";
 import { collectAllPages, type PageResult } from "./pagination";
 import type { DashboardData, HistoryEntry, ReportPortalItem, ReportSelection, ReportSourceOptions } from "./types";
 
@@ -17,6 +16,12 @@ interface Launch {
 
 interface Project {
   projectName: string;
+}
+
+export interface ReportPortalConnection {
+  apiUrl: string;
+  apiKey: string;
+  testRailBaseUrl?: string;
 }
 
 function errorData(selection: ReportSelection, error: string): DashboardData {
@@ -52,18 +57,15 @@ function errorData(selection: ReportSelection, error: string): DashboardData {
   };
 }
 
-async function fetchAllPages<T>(project: string, endpoint: string, params: Record<string, string | number>): Promise<Page<T>> {
-  return fetchAllReportPortalPages<T>(`${project}/${endpoint}`, params);
+async function fetchAllPages<T>(connection: ReportPortalConnection, project: string, endpoint: string, params: Record<string, string | number>): Promise<Page<T>> {
+  return fetchAllReportPortalPages<T>(connection, `${project}/${endpoint}`, params);
 }
 
-async function fetchReportPortalPage<T>(endpoint: string, params: Record<string, string | number>): Promise<Page<T>> {
-  const { apiUrl, apiKey } = config.reportPortal;
-  if (!apiUrl || !apiKey) throw new Error("ReportPortal credentials are not configured");
-
-  const url = new URL(`${apiUrl}/${endpoint}`);
+async function fetchReportPortalPage<T>(connection: ReportPortalConnection, endpoint: string, params: Record<string, string | number>): Promise<Page<T>> {
+  const url = new URL(`${connection.apiUrl}/${endpoint}`);
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, String(value)));
   const response = await fetch(url, {
-    headers: { Authorization: `bearer ${apiKey}` },
+    headers: { Authorization: `bearer ${connection.apiKey}` },
     cache: "no-store",
   });
   if (!response.ok) throw new Error(`ReportPortal ${endpoint} request failed with ${response.status}`);
@@ -71,22 +73,23 @@ async function fetchReportPortalPage<T>(endpoint: string, params: Record<string,
 }
 
 async function fetchAllReportPortalPages<T>(
+  connection: ReportPortalConnection,
   endpoint: string,
   params: Record<string, string | number>,
 ): Promise<Page<T>> {
   // Keep concurrency bounded so large ReportPortal projects do not create an API request spike.
   return collectAllPages((page) => (
-    fetchReportPortalPage<T>(endpoint, { ...params, "page.page": page })
+    fetchReportPortalPage<T>(connection, endpoint, { ...params, "page.page": page })
   ));
 }
 
-export async function resolveReportSelection(selection: ReportSelection): Promise<{
+export async function resolveReportSelection(connection: ReportPortalConnection, selection: ReportSelection): Promise<{
   selection: ReportSelection;
   options: ReportSourceOptions;
 }> {
   let projects = [selection.project];
   try {
-    const projectPage = await fetchAllReportPortalPages<Project>("project/list", {
+    const projectPage = await fetchAllReportPortalPages<Project>(connection, "project/list", {
       "page.size": 200,
       "page.sort": "projectName,ASC",
     });
@@ -98,7 +101,7 @@ export async function resolveReportSelection(selection: ReportSelection): Promis
   const project = projects.includes(selection.project) ? selection.project : projects[0] ?? selection.project;
   let launches = project === selection.project ? [selection.launchName] : [];
   try {
-    const launchPage = await fetchAllPages<Launch>(project, "launch", {
+    const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
       "page.size": 200,
       "page.sort": "startTime,DESC",
     });
@@ -116,7 +119,7 @@ export async function resolveReportSelection(selection: ReportSelection): Promis
 
   let launchRuns: Launch[] = [];
   try {
-    const launchPage = await fetchAllPages<Launch>(project, "launch", {
+    const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
       "filter.eq.name": launchName,
       "page.size": 200,
       "page.sort": "startTime,DESC",
@@ -145,12 +148,12 @@ export async function resolveReportSelection(selection: ReportSelection): Promis
   };
 }
 
-export async function loadReportSourceChildren(project: string, requestedLaunchName?: string): Promise<{
+export async function loadReportSourceChildren(connection: ReportPortalConnection, project: string, requestedLaunchName?: string): Promise<{
   launchName: string | undefined;
   launches: string[];
   launchRuns: ReportSourceOptions["launchRuns"];
 }> {
-  const launchPage = await fetchAllPages<Launch>(project, "launch", {
+  const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
     "page.size": 200,
     "page.sort": "startTime,DESC",
   });
@@ -162,7 +165,7 @@ export async function loadReportSourceChildren(project: string, requestedLaunchN
 
   if (!launchName) return { launchName: undefined, launches, launchRuns: [] };
 
-  const runPage = await fetchAllPages<Launch>(project, "launch", {
+  const runPage = await fetchAllPages<Launch>(connection, project, "launch", {
     "filter.eq.name": launchName,
     "page.size": 200,
     "page.sort": "startTime,DESC",
@@ -175,10 +178,9 @@ export async function loadReportSourceChildren(project: string, requestedLaunchN
   return { launchName, launches, launchRuns };
 }
 
-async function loadLiveData(selection: ReportSelection): Promise<DashboardData> {
-  const { apiUrl } = config.reportPortal;
+async function loadLiveData(connection: ReportPortalConnection, selection: ReportSelection): Promise<DashboardData> {
   const { project, launchName, launchId, team, historyDepth } = selection;
-  const launchPage = await fetchAllPages<Launch>(project, "launch", {
+  const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
     "filter.eq.name": launchName,
     "page.size": 200,
     "page.sort": "startTime,DESC",
@@ -198,11 +200,11 @@ async function loadLiveData(selection: ReportSelection): Promise<DashboardData> 
     "filter.eq.hasStats": "true",
   };
   const [suite, failed] = await Promise.all([
-    fetchAllPages<ReportPortalItem>(project, "item/v2", baseParams),
-    fetchAllPages<ReportPortalItem>(project, "item/v2", { ...baseParams, "filter.in.status": "FAILED" }),
+    fetchAllPages<ReportPortalItem>(connection, project, "item/v2", baseParams),
+    fetchAllPages<ReportPortalItem>(connection, project, "item/v2", { ...baseParams, "filter.in.status": "FAILED" }),
   ]);
   const history = failed.content.length
-    ? await fetchAllPages<HistoryEntry>(project, "item/history", {
+    ? await fetchAllPages<HistoryEntry>(connection, project, "item/history", {
       "filter.eq.launchId": launch.id,
       "filter.in.status": "FAILED",
       "filter.cnt.name": team,
@@ -213,9 +215,9 @@ async function loadLiveData(selection: ReportSelection): Promise<DashboardData> 
     : { content: [] };
   const failureHistory = mergeCurrentFailuresWithHistory(failed.content, history.content);
 
-  const reportPortalBaseUrl = new URL(apiUrl!).origin;
+  const reportPortalBaseUrl = new URL(connection.apiUrl).origin;
   return {
-    ...analyzeHistory(failureHistory, suite.content, reportPortalBaseUrl, project, launch.id, config.testRailBaseUrl),
+    ...analyzeHistory(failureHistory, suite.content, reportPortalBaseUrl, project, launch.id, connection.testRailBaseUrl),
     meta: {
       project,
       launchName,
@@ -230,9 +232,9 @@ async function loadLiveData(selection: ReportSelection): Promise<DashboardData> 
   };
 }
 
-export async function getDashboardData(selection: ReportSelection): Promise<DashboardData> {
+export async function getDashboardData(connection: ReportPortalConnection, selection: ReportSelection): Promise<DashboardData> {
   try {
-    return await loadLiveData(selection);
+    return await loadLiveData(connection, selection);
   } catch (error) {
     return errorData(selection, error instanceof Error ? error.message : "Unable to load live ReportPortal data");
   }

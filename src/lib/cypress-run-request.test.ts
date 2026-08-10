@@ -8,6 +8,7 @@ const validRequest = {
   threads: 2,
   browser: "chrome",
   timeoutSeconds: 600,
+  profileId: "b8663d08-f48b-4d2d-8a89-4ef82ffae514",
 };
 
 describe("cypressRunRequestSchema", () => {
@@ -21,10 +22,9 @@ describe("cypressRunRequestSchema", () => {
     expect(result.cypressConfig).toEqual({});
   });
 
-  it("accepts an environment profile and bounded Cypress configuration overrides", () => {
+  it("accepts a user Cypress profile and bounded configuration overrides", () => {
     const result = cypressRunRequestSchema.parse({
       ...validRequest,
-      environment: "snapshot-ecs",
       cypressConfig: {
         viewportWidth: 1440,
         viewportHeight: 900,
@@ -34,7 +34,7 @@ describe("cypressRunRequestSchema", () => {
     });
 
     expect(result).toMatchObject({
-      environment: "snapshot-ecs",
+      profileId: validRequest.profileId,
       cypressConfig: { viewportWidth: 1440, viewportHeight: 900, retries: 2, video: true },
     });
   });
@@ -46,7 +46,7 @@ describe("cypressRunRequestSchema", () => {
     { threads: 5 },
     { browser: "firefox" },
     { timeoutSeconds: 59 },
-    { environment: "../../secret" },
+    { profileId: "../../secret" },
     { cypressConfig: { viewportWidth: 200 } },
     { cypressConfig: { retries: 6 } },
     { cypressConfig: { baseUrl: "https://unapproved.example.org" } },

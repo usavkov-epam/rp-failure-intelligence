@@ -6,9 +6,10 @@ import { AppBar, Box, Button, Chip, Container, Stack, Typography } from "@mui/ma
 import AssessmentOutlined from "@mui/icons-material/AssessmentOutlined";
 import PlayCircleOutlineRounded from "@mui/icons-material/PlayCircleOutlineRounded";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
+import SettingsRounded from "@mui/icons-material/SettingsRounded";
 
 export default function AppHeader({ currentPage, userName, sourceStatus }: {
-  currentPage: "analysis" | "runs";
+  currentPage: "analysis" | "runs" | "settings";
   userName: string;
   sourceStatus?: "live" | "error";
 }) {
@@ -21,6 +22,7 @@ export default function AppHeader({ currentPage, userName, sourceStatus }: {
           <Stack direction="row" spacing={0.5} sx={{ ml: 1 }}>
             <Button component={NextLink} href="/" size="small" variant={currentPage === "analysis" ? "contained" : "text"} startIcon={<AssessmentOutlined />}>Analysis</Button>
             <Button component={NextLink} href="/runs" size="small" variant={currentPage === "runs" ? "contained" : "text"} startIcon={<PlayCircleOutlineRounded />}>Runs</Button>
+            <Button component={NextLink} href="/settings" size="small" variant={currentPage === "settings" ? "contained" : "text"} startIcon={<SettingsRounded />}>Settings</Button>
           </Stack>
         </Stack>
         <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 0.5 }}>

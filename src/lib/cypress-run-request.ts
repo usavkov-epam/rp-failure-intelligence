@@ -4,12 +4,6 @@ const specPath = z.string()
   .max(300)
   .regex(/^cypress\/e2e\/[A-Za-z0-9_./-]+\.cy\.(?:js|ts)$/, "Invalid Cypress spec path");
 
-const environmentName = z.string()
-  .trim()
-  .min(1)
-  .max(80)
-  .regex(/^[A-Za-z0-9_.-]+$/, "Invalid Cypress environment name");
-
 export const cypressConfigOverridesSchema = z.object({
   viewportWidth: z.number().int().min(320).max(3_840).optional(),
   viewportHeight: z.number().int().min(320).max(2_160).optional(),
@@ -28,7 +22,7 @@ export const cypressRunRequestSchema = z.object({
   threads: z.number().int().min(1).max(4),
   browser: z.enum(["chrome", "electron"]),
   timeoutSeconds: z.number().int().min(60).max(1_200),
-  environment: environmentName.optional(),
+  profileId: z.string().uuid(),
   cypressConfig: cypressConfigOverridesSchema.optional().default({}),
 }).strict();
 

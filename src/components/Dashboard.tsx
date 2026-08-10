@@ -60,7 +60,7 @@ interface CypressRunFormOptions {
   threads: number;
   browser: "chrome" | "electron";
   timeoutSeconds: number;
-  environment: string;
+  profileId: string;
   cypressConfig: CypressConfigOverrides;
 }
 
@@ -191,12 +191,12 @@ function Distribution({ data }: { data: DashboardData }) {
   );
 }
 
-export default function Dashboard({ initialData, reportSelection, reportSourceOptions, sourceRepository, cypressEnvironments, user }: {
+export default function Dashboard({ initialData, reportSelection, reportSourceOptions, sourceRepository, cypressProfiles, user }: {
   initialData: DashboardData;
   reportSelection: ReportSelection;
   reportSourceOptions: ReportSourceOptions;
   sourceRepository: { owner: string; repository: string; ref: string };
-  cypressEnvironments: readonly string[];
+  cypressProfiles: ReadonlyArray<{ id: string; name: string; isDefault: boolean }>;
   user: { name: string };
 }) {
   const [search, setSearch] = useState("");
@@ -213,7 +213,7 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
     threads: 1,
     browser: "chrome",
     timeoutSeconds: 600,
-    environment: "",
+    profileId: cypressProfiles.find(({ isDefault }) => isDefault)?.id || cypressProfiles[0]?.id || "",
     cypressConfig: {},
   });
   const [draftSource, setDraftSource] = useState(reportSelection);
@@ -489,19 +489,19 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
           <Stack spacing={2} sx={{ pt: 1 }}>
             <Alert severity="info">{selectedSpecs.length} unique {selectedSpecs.length === 1 ? "spec" : "specs"} will run in GitHub Actions.</Alert>
             <FormControl>
-              <InputLabel>Environment profile</InputLabel>
+              <InputLabel>Cypress profile</InputLabel>
               <Select
-                label="Environment profile"
-                value={runOptions.environment}
-                onChange={(event) => setRunOptions((current) => ({ ...current, environment: event.target.value }))}
+                label="Cypress profile"
+                value={runOptions.profileId}
+                onChange={(event) => setRunOptions((current) => ({ ...current, profileId: event.target.value }))}
+                required
               >
-                <MenuItem value="">Configured default</MenuItem>
-                {cypressEnvironments.map((environment) => <MenuItem key={environment} value={environment}>{environment}</MenuItem>)}
+                {cypressProfiles.map((profile) => <MenuItem key={profile.id} value={profile.id}>{profile.name}{profile.isDefault ? " · Default" : ""}</MenuItem>)}
               </Select>
             </FormControl>
-            {!cypressEnvironments.length && (
+            {!cypressProfiles.length && (
               <Typography variant="caption" color="text.secondary">
-                No selectable profiles are published by this deployment. The active profile from the encrypted environments.js secret will be used.
+                No Cypress profiles are configured. Create one in Settings before starting a run.
               </Typography>
             )}
             <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
@@ -567,6 +567,7 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
             variant="contained"
             startIcon={<PlayArrowRounded />}
             loading={runPending}
+            disabled={!runOptions.profileId}
             onClick={async () => {
               setRunPending(true);
               setRunError("");
@@ -577,7 +578,6 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
                   body: JSON.stringify({
                     specs: selectedSpecs,
                     ...runOptions,
-                    environment: runOptions.environment || undefined,
                   }),
                 });
                 const result = await response.json() as { requestId: string; actionsUrl: string; error?: string };

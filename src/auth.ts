@@ -93,6 +93,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (user) {
         token.githubLogin = user.githubLogin;
       }
+      if (account?.providerAccountId) token.githubUserId = account.providerAccountId;
       if (account?.access_token && config.auth.authorizationMode === "organization") {
         token.githubAccessToken = account.access_token;
       }
@@ -103,6 +104,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
     async session({ session, token }) {
       session.user.githubLogin = typeof token.githubLogin === "string" ? token.githubLogin : undefined;
+      session.user.githubUserId = typeof token.githubUserId === "string" ? token.githubUserId : undefined;
       session.user.authorizationContext = await findAuthorizationContext(
         typeof token.githubAccessToken === "string" ? token.githubAccessToken : undefined,
         session.user.githubLogin,
