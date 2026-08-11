@@ -3,72 +3,66 @@ import { NextResponse } from "next/server";
 import { getAuthorizedSession } from "@/auth";
 import { cypressRunRequestSchema } from "@/lib/cypress-run-request";
 import { validateCypressConfigValues } from "@/lib/configuration-mappings";
-import { dispatchCypressRun } from "@/lib/cypress-runs";
-import { createCypressRun, failCypressRunDispatch, getRunChannel, listCypressRuns } from "@/lib/cypress-run-store";
+import { HTTP_STATUS } from "@/lib/domain-constants";
+import { createCypressRun, failCypressRunDispatch, listCypressRuns } from "@/lib/cypress-run-store";
+import { getTestRunner } from "@/lib/test-runners";
 import { getRequestedBy, getUserOwnerKey } from "@/lib/user-identity";
-import { createRunProfileSnapshot, getCypressProfileSecret, getDashboardSettings } from "@/lib/user-settings";
+import { getCypressProfileSecret, getDashboardSettings } from "@/lib/user-settings";
 
 export async function GET() {
   const session = await getAuthorizedSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: HTTP_STATUS.UNAUTHORIZED });
 
   try {
     const ownerKey = getUserOwnerKey(session);
     let runs = await listCypressRuns(ownerKey);
-    const configuration = (await import("@/lib/config")).config;
-    if (configuration.isLocal) {
-      const { recoverInterruptedLocalCypressRuns } = await import("@/lib/local-cypress-runner");
-      if (await recoverInterruptedLocalCypressRuns(runs)) runs = await listCypressRuns(ownerKey);
-    }
-    return NextResponse.json({
-      runs,
-      channel: getRunChannel(ownerKey),
-    });
+    const runner = getTestRunner();
+    if (await runner.reconcile(runs)) runs = await listCypressRuns(ownerKey);
+    return NextResponse.json({ runs });
   } catch (error) {
     console.error("Unable to load Cypress runs", error);
-    return NextResponse.json({ error: "Unable to load Cypress runs" }, { status: 502 });
+    return NextResponse.json({ error: "Unable to load Cypress runs" }, { status: HTTP_STATUS.BAD_GATEWAY });
   }
 }
 
 export async function POST(request: Request) {
   const session = await getAuthorizedSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: HTTP_STATUS.UNAUTHORIZED });
 
   const parsed = cypressRunRequestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid Cypress run request" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid Cypress run request" }, { status: HTTP_STATUS.BAD_REQUEST });
   }
 
   const requestId = crypto.randomUUID();
   const requestedBy = getRequestedBy(session);
   const ownerKey = getUserOwnerKey(session);
-  const configuration = (await import("@/lib/config")).config;
-  const { owner, repository, workflow } = configuration.githubActions;
-  const actionsUrl = configuration.isLocal ? "/runs" : `https://github.com/${owner}/${repository}/actions/workflows/${workflow}`;
+  const runner = getTestRunner();
+  const runUrl = runner.initialRunUrl();
   try {
     const [selectedProfile, dashboardSettings] = await Promise.all([
       getCypressProfileSecret(ownerKey, parsed.data.profileId),
       getDashboardSettings(ownerKey),
     ]);
-    if (!selectedProfile) return NextResponse.json({ error: "Cypress profile was not found" }, { status: 404 });
+    if (!selectedProfile) return NextResponse.json({ error: "Cypress profile was not found" }, { status: HTTP_STATUS.NOT_FOUND });
     if (!dashboardSettings || !validateCypressConfigValues(parsed.data.cypressConfig, dashboardSettings.cypressConfigFields)) {
-      return NextResponse.json({ error: "Cypress configuration contains an unknown or invalid value" }, { status: 400 });
+      return NextResponse.json({ error: "Cypress configuration contains an unknown or invalid value" }, { status: HTTP_STATUS.BAD_REQUEST });
     }
-    const run = await createCypressRun(requestId, ownerKey, requestedBy, parsed.data, actionsUrl, {
+    const run = await createCypressRun(requestId, ownerKey, requestedBy, parsed.data, runUrl, {
       id: selectedProfile.profile.id,
       name: selectedProfile.profile.name,
     });
-    if (configuration.isLocal) {
-      const { enqueueLocalCypressRun } = await import("@/lib/local-cypress-runner");
-      enqueueLocalCypressRun(requestId, parsed.data, selectedProfile.profile.name, selectedProfile.environment);
-    } else {
-      await createRunProfileSnapshot(requestId, { name: selectedProfile.profile.name, environment: selectedProfile.environment });
-      await dispatchCypressRun(requestId, parsed.data, requestedBy);
-    }
-    return NextResponse.json({ requestId, actionsUrl, run }, { status: 202 });
+    await runner.dispatch({
+      requestId,
+      request: parsed.data,
+      requestedBy,
+      profileName: selectedProfile.profile.name,
+      profile: selectedProfile.environment,
+    });
+    return NextResponse.json({ requestId, runUrl, run }, { status: HTTP_STATUS.ACCEPTED });
   } catch (error) {
     await failCypressRunDispatch(requestId).catch(() => undefined);
     console.error("Unable to dispatch Cypress run", error);
-    return NextResponse.json({ error: "Unable to start Cypress run" }, { status: 502 });
+    return NextResponse.json({ error: "Unable to start Cypress run" }, { status: HTTP_STATUS.BAD_GATEWAY });
   }
 }

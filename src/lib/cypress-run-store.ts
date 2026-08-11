@@ -1,77 +1,80 @@
 import "server-only";
 
-import { createHmac } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import {
+  GetCommand,
+  QueryCommand,
+  TransactWriteCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 
 import { config } from "./config";
+import { getDynamoClient, getDynamoTableName } from "./dynamodb";
+import { ownerPartitionKey, runLookupKey, runSortKey } from "./dynamodb-keys";
+import { DYNAMO_ENTITY, DYNAMO_KEY, RUN_CONCLUSION, RUN_LIMITS, RUN_STATUS } from "./domain-constants";
 import { readLocalStore, updateLocalStore, type LocalRunRecord } from "./local-store";
 import type { CypressRunRequest } from "./cypress-run-request";
 import type { CypressRunDetails, CypressRunRecord, CypressRunState } from "./types";
 
-interface CypressRunRow {
-  request_id: string;
-  owner_key: string | null;
-  requested_by: string;
-  specs: string[];
-  runs: number;
-  threads: number;
-  browser: string;
-  timeout_seconds: number;
-  environment: string | null;
-  cypress_config: Record<string, string | number | boolean>;
-  status: CypressRunState;
-  conclusion: string | null;
-  github_run_id: number | null;
-  github_run_number: number | null;
-  actions_url: string;
-  started_at: string | null;
-  completed_at: string | null;
-  artifact_names: string[];
-  created_at: string;
-  updated_at: string;
+interface CypressRunItem extends CypressRunRecord {
+  pk: string;
+  sk: string;
+  entity: typeof DYNAMO_ENTITY.CYPRESS_RUN;
+  ownerKey: string;
+  requestedBy: string;
+  profileId: string;
+  completedAt?: string | null;
 }
 
-function getSupabaseConfig() {
-  const { url, serviceRoleKey } = config.supabase;
-  if (!url || !serviceRoleKey) throw new Error("Supabase run storage is not configured");
-  return { url, serviceRoleKey };
+interface CypressRunLookupItem {
+  pk: string;
+  sk: typeof DYNAMO_KEY.LOOKUP;
+  entity: typeof DYNAMO_ENTITY.CYPRESS_RUN_LOOKUP;
+  ownerKey: string;
+  runPk: string;
+  runSk: string;
 }
 
-function getClient() {
-  const { url, serviceRoleKey } = getSupabaseConfig();
-  return createClient(url, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
-
-function toRecord(row: CypressRunRow): CypressRunRecord {
+function toRecord(item: CypressRunItem): CypressRunRecord {
   return {
-    requestId: row.request_id,
-    actionsUrl: row.actions_url,
-    specs: row.specs,
-    runs: row.runs,
-    threads: row.threads,
-    browser: row.browser,
-    timeoutSeconds: row.timeout_seconds,
-    environment: row.environment || undefined,
-    cypressConfig: row.cypress_config || {},
-    requestedAt: row.created_at,
-    status: row.status,
-    conclusion: row.conclusion,
-    runId: row.github_run_id ?? undefined,
-    runNumber: row.github_run_number ?? undefined,
-    startedAt: row.started_at,
-    updatedAt: row.updated_at,
-    artifactCount: row.artifact_names.length,
-    artifactNames: row.artifact_names,
+    requestId: item.requestId,
+    runner: item.runner || config.testRunner.kind,
+    runUrl: item.runUrl,
+    specs: item.specs,
+    runs: item.runs,
+    threads: item.threads,
+    browser: item.browser,
+    timeoutSeconds: item.timeoutSeconds,
+    environment: item.environment,
+    cypressConfig: item.cypressConfig || {},
+    requestedAt: item.requestedAt,
+    status: item.status,
+    conclusion: item.conclusion,
+    runId: item.runId,
+    runNumber: item.runNumber,
+    startedAt: item.startedAt,
+    updatedAt: item.updatedAt,
+    artifactCount: item.artifactNames?.length || 0,
+    artifactNames: item.artifactNames || [],
   };
 }
 
-export function getRunChannel(ownerKey: string) {
-  const digest = createHmac("sha256", config.auth.notificationSecret)
-    .update(ownerKey)
-    .digest("hex");
-  return `cypress-runs:${digest}`;
+function normalizeLocalRecord(item: LocalRunRecord): LocalRunRecord {
+  // Local volumes may outlive image upgrades; map the former provider-specific URL field lazily.
+  const legacy = item as LocalRunRecord & { actionsUrl?: string };
+  return {
+    ...item,
+    runner: item.runner || config.testRunner.kind,
+    runUrl: item.runUrl || legacy.actionsUrl || "/runs",
+  };
+}
+
+async function getRunLocation(requestId: string) {
+  const result = await getDynamoClient().send(new GetCommand({
+    TableName: getDynamoTableName(),
+    Key: { pk: runLookupKey(requestId), sk: DYNAMO_KEY.LOOKUP },
+    ConsistentRead: true,
+  }));
+  return result.Item as CypressRunLookupItem | undefined;
 }
 
 export async function createCypressRun(
@@ -79,7 +82,7 @@ export async function createCypressRun(
   ownerKey: string,
   requestedBy: string,
   request: CypressRunRequest,
-  actionsUrl: string,
+  runUrl: string,
   profile: { id: string; name: string },
 ) {
   if (config.isLocal) {
@@ -89,7 +92,8 @@ export async function createCypressRun(
         requestId,
         ownerKey,
         requestedBy,
-        actionsUrl,
+        runner: config.testRunner.kind,
+        runUrl,
         specs: request.specs,
         runs: request.runs,
         threads: request.threads,
@@ -98,56 +102,91 @@ export async function createCypressRun(
         environment: profile.name,
         cypressConfig: request.cypressConfig,
         requestedAt: now,
-        status: "queued",
+        status: RUN_STATUS.QUEUED,
         conclusion: null,
         updatedAt: now,
         artifactCount: 0,
         artifactNames: [],
       };
       store.runs.unshift(run);
-      store.runs = store.runs.slice(0, 100);
+      store.runs = store.runs.slice(0, RUN_LIMITS.LOCAL_HISTORY_SIZE);
       return run;
     });
   }
-  const { data, error } = await getClient().from("cypress_runs").insert({
-    request_id: requestId,
-    owner_key: ownerKey,
-    requested_by: requestedBy,
+
+  const now = new Date().toISOString();
+  const pk = ownerPartitionKey(ownerKey);
+  const sk = runSortKey(now, requestId);
+  const item: CypressRunItem = {
+    pk,
+    sk,
+    entity: DYNAMO_ENTITY.CYPRESS_RUN,
+    ownerKey,
+    requestedBy,
+    profileId: profile.id,
+    requestId,
+    runner: config.testRunner.kind,
+    runUrl,
     specs: request.specs,
     runs: request.runs,
     threads: request.threads,
     browser: request.browser,
-    timeout_seconds: request.timeoutSeconds,
+    timeoutSeconds: request.timeoutSeconds,
     environment: profile.name,
-    profile_id: profile.id,
-    profile_name: profile.name,
-    cypress_config: request.cypressConfig,
-    actions_url: actionsUrl,
-  }).select().single();
-
-  if (error) throw new Error(`Unable to store Cypress run: ${error.message}`);
-  return toRecord(data as CypressRunRow);
+    cypressConfig: request.cypressConfig,
+    requestedAt: now,
+    status: RUN_STATUS.QUEUED,
+    conclusion: null,
+    updatedAt: now,
+    artifactCount: 0,
+    artifactNames: [],
+  };
+  const lookup: CypressRunLookupItem = {
+    pk: runLookupKey(requestId),
+    sk: DYNAMO_KEY.LOOKUP,
+    entity: DYNAMO_ENTITY.CYPRESS_RUN_LOOKUP,
+    ownerKey,
+    runPk: pk,
+    runSk: sk,
+  };
+  await getDynamoClient().send(new TransactWriteCommand({
+    TransactItems: [
+      { Put: { TableName: getDynamoTableName(), Item: item, ConditionExpression: "attribute_not_exists(pk)" } },
+      { Put: { TableName: getDynamoTableName(), Item: lookup, ConditionExpression: "attribute_not_exists(pk)" } },
+    ],
+  }));
+  return toRecord(item);
 }
 
 export async function listCypressRuns(ownerKey: string) {
-  if (config.isLocal) return (await readLocalStore()).runs.filter((run) => run.ownerKey === ownerKey).slice(0, 20);
-  const { data, error } = await getClient()
-    .from("cypress_runs")
-    .select("*")
-    .eq("owner_key", ownerKey)
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  if (error) throw new Error(`Unable to load Cypress runs: ${error.message}`);
-  return (data as CypressRunRow[]).map(toRecord);
+  if (config.isLocal) return (await readLocalStore()).runs
+    .filter((run) => run.ownerKey === ownerKey)
+    .slice(0, RUN_LIMITS.LIST_SIZE)
+    .map(normalizeLocalRecord);
+  const result = await getDynamoClient().send(new QueryCommand({
+    TableName: getDynamoTableName(),
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: { ":pk": ownerPartitionKey(ownerKey), ":prefix": DYNAMO_KEY.RUN_PREFIX },
+    ScanIndexForward: false,
+    Limit: RUN_LIMITS.LIST_SIZE,
+    ConsistentRead: true,
+  }));
+  return ((result.Items || []) as CypressRunItem[]).map(toRecord);
 }
 
 export async function getCypressRun(ownerKey: string, requestId: string) {
-  if (config.isLocal) return (await readLocalStore()).runs.find((run) => run.ownerKey === ownerKey && run.requestId === requestId) || null;
-  const { data, error } = await getClient().from("cypress_runs").select("*")
-    .eq("owner_key", ownerKey).eq("request_id", requestId).maybeSingle();
-  if (error) throw new Error(`Unable to load Cypress run: ${error.message}`);
-  return data ? toRecord(data as CypressRunRow) : null;
+  if (config.isLocal) {
+    const run = (await readLocalStore()).runs.find((item) => item.ownerKey === ownerKey && item.requestId === requestId);
+    return run ? normalizeLocalRecord(run) : null;
+  }
+  const location = await getRunLocation(requestId);
+  if (!location || location.ownerKey !== ownerKey) return null;
+  const result = await getDynamoClient().send(new GetCommand({
+    TableName: getDynamoTableName(),
+    Key: { pk: location.runPk, sk: location.runSk },
+    ConsistentRead: true,
+  }));
+  return result.Item ? toRecord(result.Item as CypressRunItem) : null;
 }
 
 export async function failCypressRunDispatch(requestId: string) {
@@ -155,20 +194,22 @@ export async function failCypressRunDispatch(requestId: string) {
     await updateLocalStore((store) => {
       const run = store.runs.find((item) => item.requestId === requestId);
       if (!run) return;
-      run.status = "completed";
-      run.conclusion = "dispatch_failure";
+      run.status = RUN_STATUS.COMPLETED;
+      run.conclusion = RUN_CONCLUSION.DISPATCH_FAILURE;
       run.updatedAt = new Date().toISOString();
     });
     return;
   }
-  const { error } = await getClient().from("cypress_runs").update({
-    status: "completed",
-    conclusion: "dispatch_failure",
-    completed_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }).eq("request_id", requestId);
-
-  if (error) throw new Error(`Unable to update Cypress run: ${error.message}`);
+  const location = await getRunLocation(requestId);
+  if (!location) return;
+  const now = new Date().toISOString();
+  await getDynamoClient().send(new UpdateCommand({
+    TableName: getDynamoTableName(),
+    Key: { pk: location.runPk, sk: location.runSk },
+    UpdateExpression: "SET #status = :status, conclusion = :conclusion, completedAt = :now, updatedAt = :now",
+    ExpressionAttributeNames: { "#status": "status" },
+    ExpressionAttributeValues: { ":status": RUN_STATUS.COMPLETED, ":conclusion": RUN_CONCLUSION.DISPATCH_FAILURE, ":now": now },
+  }));
 }
 
 export async function updateCypressRun(requestId: string, update: {
@@ -176,7 +217,7 @@ export async function updateCypressRun(requestId: string, update: {
   conclusion: string | null;
   githubRunId: number;
   githubRunNumber: number;
-  actionsUrl: string;
+  runUrl: string;
   startedAt: string | null;
   completedAt: string | null;
   artifactNames: string[];
@@ -189,7 +230,7 @@ export async function updateCypressRun(requestId: string, update: {
       run.conclusion = update.conclusion;
       run.runId = update.githubRunId;
       run.runNumber = update.githubRunNumber;
-      run.actionsUrl = update.actionsUrl;
+      run.runUrl = update.runUrl;
       run.startedAt = update.startedAt;
       run.updatedAt = update.completedAt || new Date().toISOString();
       run.artifactNames = update.artifactNames;
@@ -197,50 +238,30 @@ export async function updateCypressRun(requestId: string, update: {
       return run.ownerKey;
     });
   }
-  const { data, error } = await getClient().from("cypress_runs").update({
-    status: update.status,
-    conclusion: update.conclusion,
-    github_run_id: update.githubRunId,
-    github_run_number: update.githubRunNumber,
-    actions_url: update.actionsUrl,
-    started_at: update.startedAt,
-    completed_at: update.completedAt,
-    artifact_names: update.artifactNames,
-    updated_at: new Date().toISOString(),
-  }).eq("request_id", requestId).select("owner_key").maybeSingle();
-
-  if (error) throw new Error(`Unable to update Cypress run: ${error.message}`);
-  return data?.owner_key as string | undefined;
-}
-
-export async function broadcastRunChange(ownerKey: string, requestId: string) {
-  if (config.isLocal) return;
-  const { url, serviceRoleKey } = getSupabaseConfig();
-  const response = await fetch(`${url}/realtime/v1/api/broadcast`, {
-    method: "POST",
-    headers: {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
-      "Content-Type": "application/json",
+  const location = await getRunLocation(requestId);
+  if (!location) return undefined;
+  await getDynamoClient().send(new UpdateCommand({
+    TableName: getDynamoTableName(),
+    Key: { pk: location.runPk, sk: location.runSk },
+    UpdateExpression: "SET #status = :status, conclusion = :conclusion, runId = :runId, runNumber = :runNumber, runUrl = :runUrl, startedAt = :startedAt, completedAt = :completedAt, artifactNames = :artifactNames, artifactCount = :artifactCount, updatedAt = :updatedAt",
+    ExpressionAttributeNames: { "#status": "status" },
+    ExpressionAttributeValues: {
+      ":status": update.status,
+      ":conclusion": update.conclusion,
+      ":runId": update.githubRunId,
+      ":runNumber": update.githubRunNumber,
+      ":runUrl": update.runUrl,
+      ":startedAt": update.startedAt,
+      ":completedAt": update.completedAt,
+      ":artifactNames": update.artifactNames,
+      ":artifactCount": update.artifactNames.length,
+      ":updatedAt": new Date().toISOString(),
     },
-    body: JSON.stringify({
-      messages: [{
-        topic: getRunChannel(ownerKey),
-        event: "cypress_run_changed",
-        payload: { requestId },
-        private: false,
-      }],
-    }),
-    cache: "no-store",
-  });
-
-  if (!response.ok) throw new Error(`Unable to broadcast Cypress run change: ${response.status}`);
+  }));
+  return location.ownerKey;
 }
 
-export async function updateLocalCypressRun(
-  requestId: string,
-  update: (run: LocalRunRecord) => void,
-) {
+export async function updateLocalCypressRun(requestId: string, update: (run: LocalRunRecord) => void) {
   if (!config.isLocal) throw new Error("Local Cypress execution is not enabled");
   return updateLocalStore((store) => {
     const run = store.runs.find((item) => item.requestId === requestId);

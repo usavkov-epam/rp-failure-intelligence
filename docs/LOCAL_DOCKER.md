@@ -10,7 +10,7 @@ ReportPortal remains the application's data source, so a developer needs a Repor
 | --- | --- | --- |
 | `local` | Developer workstation | Implicit local user and encrypted Docker-volume storage |
 | `local-sha-<commit>` | Reproducible local build | Same behavior as `local`, pinned to a commit |
-| `latest`, `sha-<commit>`, version tags | Hosted/production use | GitHub OAuth and Supabase are required |
+| `latest`, `sha-<commit>`, version tags | Hosted/production use | GitHub OAuth plus the CDK-created AWS data layer are required |
 
 Local mode is enabled only in the local image target. The production image never falls back to local mode when configuration is missing.
 

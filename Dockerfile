@@ -25,6 +25,9 @@ ENV AUTH_GITHUB_ID=container-image-build-client
 ENV AUTH_GITHUB_SECRET=container-image-build-secret
 ENV AUTHORIZATION_MODE=users
 ENV AUTH_ALLOWED_USERS=container-image-builder
+ENV AWS_DYNAMODB_TABLE=container-image-build-table
+ENV DATA_ENCRYPTION_KEY=container-image-build-encryption-key
+ENV WEB_PUSH_PUBLIC_KEY=container-image-build-public-key
 RUN pnpm build
 
 FROM node:22-bookworm-slim AS runtime-base
@@ -55,7 +58,7 @@ ENV CYPRESS_CACHE_FOLDER=/data/runner/cache/Cypress
 ENV COREPACK_HOME=/data/runner/cache/corepack
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      chromium git unzip libgtk-3-0 libgbm-dev libnotify-dev libnss3 \
+      ca-certificates chromium git unzip libgtk-3-0 libgbm-dev libnotify-dev libnss3 \
       libxss1 libasound2 libxtst6 xauth xvfb \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable \

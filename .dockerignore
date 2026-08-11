@@ -2,6 +2,7 @@
 .github
 .npm-cache
 .next
+cdk.out
 .open-next
 .vercel
 .wrangler

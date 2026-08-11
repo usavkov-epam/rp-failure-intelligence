@@ -1,4 +1,6 @@
-export type Risk = "Persistent" | "High risk" | "Intermittent" | "Isolated";
+import type { RISK, RUN_STATUS, TestRunnerKind } from "./domain-constants";
+
+export type Risk = typeof RISK[keyof typeof RISK];
 
 export interface FailureRow {
   id: number;
@@ -86,11 +88,12 @@ export interface ReportSourceOptions {
   launchRuns: LaunchRunOption[];
 }
 
-export type CypressRunState = "queued" | "in_progress" | "completed";
+export type CypressRunState = typeof RUN_STATUS[keyof typeof RUN_STATUS];
 
 export interface CypressRunRecord {
   requestId: string;
-  actionsUrl: string;
+  runner: TestRunnerKind;
+  runUrl: string;
   specs: string[];
   runs: number;
   threads: number;

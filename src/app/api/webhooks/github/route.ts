@@ -2,8 +2,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { config } from "@/lib/config";
-import { loadCypressArtifacts } from "@/lib/cypress-runs";
-import { broadcastRunChange, updateCypressRun } from "@/lib/cypress-run-store";
+import { updateCypressRun } from "@/lib/cypress-run-store";
+import { AUTHORIZATION, GITHUB, HTTP_HEADER, HTTP_STATUS, RUN_STATUS } from "@/lib/domain-constants";
+import { githubActionsClient } from "@/lib/test-runners/github-actions";
 import type { CypressRunState } from "@/lib/types";
 
 interface WorkflowRunPayload {
@@ -26,27 +27,27 @@ const requestIdPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a
 
 function hasValidSignature(body: string, signature: string | null) {
   const secret = config.githubWebhook.secret;
-  if (!secret || !signature?.startsWith("sha256=")) return false;
-  const expected = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
+  if (!secret || !signature?.startsWith(AUTHORIZATION.SHA256_SIGNATURE_PREFIX)) return false;
+  const expected = `${AUTHORIZATION.SHA256_SIGNATURE_PREFIX}${createHmac("sha256", secret).update(body).digest("hex")}`;
   const providedBuffer = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
   return providedBuffer.length === expectedBuffer.length && timingSafeEqual(providedBuffer, expectedBuffer);
 }
 
 function normalizeStatus(status: string): CypressRunState {
-  if (status === "completed") return "completed";
-  if (status === "in_progress") return "in_progress";
-  return "queued";
+  if (status === RUN_STATUS.COMPLETED) return RUN_STATUS.COMPLETED;
+  if (status === RUN_STATUS.IN_PROGRESS) return RUN_STATUS.IN_PROGRESS;
+  return RUN_STATUS.QUEUED;
 }
 
 export async function POST(request: Request) {
-  if (config.isLocal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (config.isLocal) return NextResponse.json({ error: "Not found" }, { status: HTTP_STATUS.NOT_FOUND });
   const body = await request.text();
-  if (!hasValidSignature(body, request.headers.get("x-hub-signature-256"))) {
-    return NextResponse.json({ error: "Invalid webhook signature" }, { status: 401 });
+  if (!hasValidSignature(body, request.headers.get(HTTP_HEADER.GITHUB_SIGNATURE))) {
+    return NextResponse.json({ error: "Invalid webhook signature" }, { status: HTTP_STATUS.UNAUTHORIZED });
   }
 
-  if (request.headers.get("x-github-event") !== "workflow_run") {
+  if (request.headers.get(HTTP_HEADER.GITHUB_EVENT) !== GITHUB.ACTIONS_EVENT) {
     return NextResponse.json({ accepted: true, ignored: true });
   }
 
@@ -59,20 +60,19 @@ export async function POST(request: Request) {
   }
 
   const status = normalizeStatus(payload.workflow_run.status);
-  const artifactNames = status === "completed"
-    ? await loadCypressArtifacts(payload.workflow_run.id)
+  const artifactNames = status === RUN_STATUS.COMPLETED
+    ? await githubActionsClient.artifactNames(payload.workflow_run.id)
     : [];
   const ownerKey = await updateCypressRun(requestId, {
     status,
     conclusion: payload.workflow_run.conclusion,
     githubRunId: payload.workflow_run.id,
     githubRunNumber: payload.workflow_run.run_number,
-    actionsUrl: payload.workflow_run.html_url,
+    runUrl: payload.workflow_run.html_url,
     startedAt: payload.workflow_run.run_started_at,
-    completedAt: status === "completed" ? payload.workflow_run.updated_at : null,
+    completedAt: status === RUN_STATUS.COMPLETED ? payload.workflow_run.updated_at : null,
     artifactNames,
   });
 
-  if (ownerKey) await broadcastRunChange(ownerKey, requestId);
   return NextResponse.json({ accepted: true, updated: Boolean(ownerKey) });
 }

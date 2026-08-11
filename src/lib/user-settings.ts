@@ -1,10 +1,20 @@
 import "server-only";
 
-import { createClient } from "@supabase/supabase-js";
+import {
+  DeleteCommand,
+  GetCommand,
+  PutCommand,
+  QueryCommand,
+  TransactWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 
 import { config } from "./config";
 import { defaultCypressConfigFields, legacyReportFields } from "./configuration-mappings";
+import { getDynamoClient, getDynamoTableName } from "./dynamodb";
+import { ownerPartitionKey, profileSortKey, snapshotKey } from "./dynamodb-keys";
+import { DYNAMO_ENTITY, DYNAMO_KEY, TIME } from "./domain-constants";
 import { readLocalStore, updateLocalStore, type LocalProfileRecord } from "./local-store";
+import { decryptValue, encryptValue, type EncryptedValue } from "./secure-value";
 import type {
   CypressProfileInput,
   CypressProfileSecret,
@@ -14,32 +24,23 @@ import type {
   RunProfileSnapshot,
 } from "./user-settings-schema";
 
-interface DashboardRow {
-  owner_key: string;
-  reportportal_api_url: string;
-  testrail_base_url: string | null;
-  default_project: string;
-  default_launch_name: string;
-  default_team: string;
-  default_history_depth: number;
-  secret_id: string;
+interface DashboardItem {
+  pk: string;
+  sk: typeof DYNAMO_KEY.SETTINGS;
+  entity: typeof DYNAMO_ENTITY.DASHBOARD_SETTINGS;
+  encrypted: EncryptedValue;
+  updatedAt: string;
 }
 
-interface CypressProfileRow {
+interface CypressProfileItem {
+  pk: string;
+  sk: string;
+  entity: typeof DYNAMO_ENTITY.CYPRESS_PROFILE;
   id: string;
-  owner_key: string;
   name: string;
-  is_default: boolean;
-  secret_id: string;
-}
-
-interface DashboardSecrets {
-  reportPortalApiKey: string;
-  testRailApiUser?: string;
-  testRailApiKey?: string;
-  reportFields?: DashboardSettingsInput["reportFields"];
-  cypressConfigFields?: DashboardSettingsInput["cypressConfigFields"];
-  launchProfileMappings?: DashboardSettingsInput["launchProfileMappings"];
+  isDefault: boolean;
+  encrypted: EncryptedValue;
+  updatedAt: string;
 }
 
 interface StoredCypressProfile extends Omit<CypressProfileSecret, "secretKeys"> {
@@ -48,173 +49,111 @@ interface StoredCypressProfile extends Omit<CypressProfileSecret, "secretKeys"> 
   edgeApiKey?: string;
 }
 
-function getClient() {
-  const { url, serviceRoleKey } = config.supabase;
-  if (!url || !serviceRoleKey) throw new Error("Supabase user configuration is not configured");
-  return createClient(url, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+function dashboardContext(ownerKey: string) {
+  return `dashboard:${ownerKey}`;
 }
 
-async function createSecret(value: unknown, name: string, description: string) {
-  const { data, error } = await getClient().rpc("app_secret_create", {
-    secret_value: JSON.stringify(value),
-    secret_name: name,
-    secret_description: description,
-  });
-  if (error || typeof data !== "string") throw new Error(`Unable to store encrypted configuration: ${error?.message || "invalid Vault response"}`);
-  return data;
+function profileContext(ownerKey: string, profileId: string) {
+  return `profile:${ownerKey}:${profileId}`;
 }
 
-async function updateSecret(id: string, value: unknown) {
-  const { error } = await getClient().rpc("app_secret_update", {
-    secret_identifier: id,
-    secret_value: JSON.stringify(value),
-  });
-  if (error) throw new Error(`Unable to update encrypted configuration: ${error.message}`);
-}
-
-async function readSecret<T>(id: string): Promise<T> {
-  const { data, error } = await getClient().rpc("app_secret_read", { secret_identifier: id });
-  if (error || typeof data !== "string") throw new Error(`Unable to read encrypted configuration: ${error?.message || "secret unavailable"}`);
-  return JSON.parse(data) as T;
-}
-
-async function deleteSecret(id: string) {
-  const { error } = await getClient().rpc("app_secret_delete", { secret_identifier: id });
-  if (error) throw new Error(`Unable to delete encrypted configuration: ${error.message}`);
-}
-
-function dashboardView(row: DashboardRow, secrets: DashboardSecrets): DashboardSettingsView {
-  const storedReportFields = secrets.reportFields || legacyReportFields.map((field) => ({
-    ...field,
-    defaultValue: row.default_team,
-  }));
-  const reportFields = storedReportFields.map((field) => ({
-    ...field,
-    type: field.type || "text" as const,
-    options: field.options || [],
-  }));
+function dashboardView(input: DashboardSettingsInput): DashboardSettingsView {
+  const storedReportFields = input.reportFields.length
+    ? input.reportFields
+    : legacyReportFields.map((field) => ({ ...field, defaultValue: "" }));
   return {
     configured: true,
-    reportPortalApiUrl: row.reportportal_api_url,
-    testRailBaseUrl: row.testrail_base_url || "",
-    testRailApiUser: secrets.testRailApiUser || "",
-    defaultProject: row.default_project,
-    defaultLaunchName: row.default_launch_name,
-    defaultHistoryDepth: row.default_history_depth,
-    reportFields,
-    cypressConfigFields: secrets.cypressConfigFields || defaultCypressConfigFields,
-    launchProfileMappings: secrets.launchProfileMappings || [],
-    hasReportPortalApiKey: Boolean(secrets.reportPortalApiKey),
-    hasTestRailApiKey: Boolean(secrets.testRailApiKey),
+    reportPortalApiUrl: input.reportPortalApiUrl,
+    testRailBaseUrl: input.testRailBaseUrl || "",
+    testRailApiUser: input.testRailApiUser || "",
+    defaultProject: input.defaultProject,
+    defaultLaunchName: input.defaultLaunchName,
+    defaultHistoryDepth: input.defaultHistoryDepth,
+    reportFields: storedReportFields.map((field) => ({
+      ...field,
+      type: field.type || "text" as const,
+      options: field.options || [],
+    })),
+    cypressConfigFields: input.cypressConfigFields || defaultCypressConfigFields,
+    launchProfileMappings: input.launchProfileMappings || [],
+    hasReportPortalApiKey: Boolean(input.reportPortalApiKey),
+    hasTestRailApiKey: Boolean(input.testRailApiKey),
   };
 }
 
-function localDashboardView(input: DashboardSettingsInput): DashboardSettingsView {
-  return dashboardView({
-    owner_key: "local:developer",
-    reportportal_api_url: input.reportPortalApiUrl,
-    testrail_base_url: input.testRailBaseUrl || null,
-    default_project: input.defaultProject,
-    default_launch_name: input.defaultLaunchName,
-    default_team: input.reportFields[0]?.defaultValue || "",
-    default_history_depth: input.defaultHistoryDepth,
-    secret_id: "local",
-  }, {
-    reportPortalApiKey: input.reportPortalApiKey || "",
-    testRailApiUser: input.testRailApiUser,
-    testRailApiKey: input.testRailApiKey,
-    reportFields: input.reportFields,
-    cypressConfigFields: input.cypressConfigFields,
-    launchProfileMappings: input.launchProfileMappings,
-  });
+async function readHostedDashboard(ownerKey: string) {
+  const result = await getDynamoClient().send(new GetCommand({
+    TableName: getDynamoTableName(),
+    Key: { pk: ownerPartitionKey(ownerKey), sk: DYNAMO_KEY.SETTINGS },
+    ConsistentRead: true,
+  }));
+  const item = result.Item as DashboardItem | undefined;
+  return item ? decryptValue<DashboardSettingsInput>(item.encrypted, dashboardContext(ownerKey)) : null;
 }
 
 export async function getDashboardSettings(ownerKey: string) {
   if (config.isLocal) {
     const dashboard = (await readLocalStore()).dashboard;
-    return dashboard?.ownerKey === ownerKey ? localDashboardView(dashboard.settings) : null;
+    return dashboard?.ownerKey === ownerKey ? dashboardView(dashboard.settings) : null;
   }
-  const { data, error } = await getClient().from("user_dashboard_settings").select("*").eq("owner_key", ownerKey).maybeSingle();
-  if (error) throw new Error(`Unable to load dashboard settings: ${error.message}`);
-  if (!data) return null;
-  const row = data as DashboardRow;
-  return dashboardView(row, await readSecret<DashboardSecrets>(row.secret_id));
+  const dashboard = await readHostedDashboard(ownerKey);
+  return dashboard ? dashboardView(dashboard) : null;
 }
 
 export async function getDashboardConnection(ownerKey: string) {
+  let stored: DashboardSettingsInput | null | undefined;
   if (config.isLocal) {
     const dashboard = (await readLocalStore()).dashboard;
-    if (!dashboard || dashboard.ownerKey !== ownerKey) return null;
-    return {
-      settings: localDashboardView(dashboard.settings),
-      reportPortal: { apiUrl: dashboard.settings.reportPortalApiUrl.replace(/\/$/, ""), apiKey: dashboard.settings.reportPortalApiKey || "" },
-      testRailBaseUrl: dashboard.settings.testRailBaseUrl?.replace(/\/$/, ""),
-    };
+    stored = dashboard?.ownerKey === ownerKey ? dashboard.settings : null;
+  } else {
+    stored = await readHostedDashboard(ownerKey);
   }
-  const { data, error } = await getClient().from("user_dashboard_settings").select("*").eq("owner_key", ownerKey).maybeSingle();
-  if (error) throw new Error(`Unable to load dashboard settings: ${error.message}`);
-  if (!data) return null;
-  const row = data as DashboardRow;
-  const secrets = await readSecret<DashboardSecrets>(row.secret_id);
+  if (!stored) return null;
   return {
-    settings: dashboardView(row, secrets),
-    reportPortal: { apiUrl: row.reportportal_api_url.replace(/\/$/, ""), apiKey: secrets.reportPortalApiKey },
-    testRailBaseUrl: row.testrail_base_url?.replace(/\/$/, ""),
+    settings: dashboardView(stored),
+    reportPortal: {
+      apiUrl: stored.reportPortalApiUrl.replace(/\/$/, ""),
+      apiKey: stored.reportPortalApiKey || "",
+    },
+    testRailBaseUrl: stored.testRailBaseUrl?.replace(/\/$/, ""),
   };
+}
+
+function mergeDashboardSettings(input: DashboardSettingsInput, previous?: DashboardSettingsInput): DashboardSettingsInput {
+  const merged = {
+    ...input,
+    reportPortalApiUrl: input.reportPortalApiUrl.replace(/\/$/, ""),
+    testRailBaseUrl: input.testRailBaseUrl?.replace(/\/$/, "") || "",
+    reportPortalApiKey: input.reportPortalApiKey || previous?.reportPortalApiKey || "",
+    testRailApiKey: input.testRailApiKey || previous?.testRailApiKey,
+    testRailApiUser: input.testRailApiUser || previous?.testRailApiUser,
+  };
+  if (!merged.reportPortalApiKey) throw new Error("ReportPortal API key is required");
+  return merged;
 }
 
 export async function saveDashboardSettings(ownerKey: string, input: DashboardSettingsInput) {
   if (config.isLocal) {
     const settings = await updateLocalStore((store) => {
       const previous = store.dashboard?.ownerKey === ownerKey ? store.dashboard.settings : undefined;
-      const merged: DashboardSettingsInput = {
-        ...input,
-        reportPortalApiUrl: input.reportPortalApiUrl.replace(/\/$/, ""),
-        testRailBaseUrl: input.testRailBaseUrl?.replace(/\/$/, "") || "",
-        reportPortalApiKey: input.reportPortalApiKey || previous?.reportPortalApiKey || "",
-        testRailApiKey: input.testRailApiKey || previous?.testRailApiKey,
-        testRailApiUser: input.testRailApiUser || previous?.testRailApiUser,
-      };
-      if (!merged.reportPortalApiKey) throw new Error("ReportPortal API key is required");
+      const merged = mergeDashboardSettings(input, previous);
       store.dashboard = { ownerKey, settings: merged };
       return merged;
     });
-    return localDashboardView(settings);
+    return dashboardView(settings);
   }
-  const client = getClient();
-  const { data: existingData, error: existingError } = await client.from("user_dashboard_settings")
-    .select("*").eq("owner_key", ownerKey).maybeSingle();
-  if (existingError) throw new Error(`Unable to load dashboard settings: ${existingError.message}`);
-  const existing = existingData as DashboardRow | null;
-  const previous = existing ? await readSecret<DashboardSecrets>(existing.secret_id) : undefined;
-  const secrets: DashboardSecrets = {
-    reportPortalApiKey: input.reportPortalApiKey || previous?.reportPortalApiKey || "",
-    testRailApiUser: input.testRailApiUser || previous?.testRailApiUser,
-    testRailApiKey: input.testRailApiKey || previous?.testRailApiKey,
-    reportFields: input.reportFields,
-    cypressConfigFields: input.cypressConfigFields,
-    launchProfileMappings: input.launchProfileMappings,
-  };
-  if (!secrets.reportPortalApiKey) throw new Error("ReportPortal API key is required");
 
-  const secretId = existing?.secret_id || await createSecret(secrets, `dashboard:${ownerKey}`, "User dashboard integration credentials");
-  if (existing) await updateSecret(secretId, secrets);
-  const { error } = await client.from("user_dashboard_settings").upsert({
-    owner_key: ownerKey,
-    reportportal_api_url: input.reportPortalApiUrl.replace(/\/$/, ""),
-    testrail_base_url: input.testRailBaseUrl?.replace(/\/$/, "") || null,
-    default_project: input.defaultProject,
-    default_launch_name: input.defaultLaunchName,
-    default_team: input.reportFields[0]?.defaultValue || "",
-    default_history_depth: input.defaultHistoryDepth,
-    secret_id: secretId,
-    updated_at: new Date().toISOString(),
-  });
-  if (error) {
-    if (!existing) await deleteSecret(secretId).catch(() => undefined);
-    throw new Error(`Unable to save dashboard settings: ${error.message}`);
-  }
-  return getDashboardSettings(ownerKey);
+  const settings = mergeDashboardSettings(input, await readHostedDashboard(ownerKey) || undefined);
+  const now = new Date().toISOString();
+  const item: DashboardItem = {
+    pk: ownerPartitionKey(ownerKey),
+    sk: DYNAMO_KEY.SETTINGS,
+    entity: DYNAMO_ENTITY.DASHBOARD_SETTINGS,
+    encrypted: encryptValue(settings, dashboardContext(ownerKey)),
+    updatedAt: now,
+  };
+  await getDynamoClient().send(new PutCommand({ TableName: getDynamoTableName(), Item: item }));
+  return dashboardView(settings);
 }
 
 function storedSecretKeys(stored: StoredCypressProfile) {
@@ -254,12 +193,12 @@ function toStoredProfile(input: CypressProfileInput, previous?: StoredCypressPro
   return { baseUrl: input.baseUrl, env, secretKeys };
 }
 
-function profileView(row: CypressProfileRow, stored: StoredCypressProfile): CypressProfileView {
+function profileView(id: string, name: string, isDefault: boolean, stored: StoredCypressProfile): CypressProfileView {
   const secretKeys = new Set(storedSecretKeys(stored));
   return {
-    id: row.id,
-    name: row.name,
-    isDefault: row.is_default,
+    id,
+    name,
+    isDefault,
     baseUrl: stored.baseUrl,
     variables: Object.entries(stored.env).map(([key, value]) => ({
       key,
@@ -271,35 +210,62 @@ function profileView(row: CypressProfileRow, stored: StoredCypressProfile): Cypr
   };
 }
 
+async function listHostedProfileItems(ownerKey: string) {
+  const result = await getDynamoClient().send(new QueryCommand({
+    TableName: getDynamoTableName(),
+    KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+    ExpressionAttributeValues: { ":pk": ownerPartitionKey(ownerKey), ":prefix": DYNAMO_KEY.PROFILE_PREFIX },
+    ConsistentRead: true,
+  }));
+  return (result.Items || []) as CypressProfileItem[];
+}
+
+function decryptProfile(ownerKey: string, item: CypressProfileItem) {
+  return decryptValue<StoredCypressProfile>(item.encrypted, profileContext(ownerKey, item.id));
+}
+
 export async function listCypressProfiles(ownerKey: string) {
   if (config.isLocal) {
     return (await readLocalStore()).profiles.filter((profile) => profile.ownerKey === ownerKey)
       .sort((left, right) => Number(right.isDefault) - Number(left.isDefault) || left.name.localeCompare(right.name))
-      .map((profile) => profileView({ id: profile.id, owner_key: profile.ownerKey, name: profile.name, is_default: profile.isDefault, secret_id: "local" }, profile.environment));
+      .map((profile) => profileView(profile.id, profile.name, profile.isDefault, profile.environment));
   }
-  const { data, error } = await getClient().from("cypress_profiles").select("*").eq("owner_key", ownerKey)
-    .order("is_default", { ascending: false }).order("name");
-  if (error) throw new Error(`Unable to load Cypress profiles: ${error.message}`);
-  return Promise.all((data as CypressProfileRow[]).map(async (row) => profileView(row, await readSecret<StoredCypressProfile>(row.secret_id))));
+  const items = await listHostedProfileItems(ownerKey);
+  return items
+    .sort((left, right) => Number(right.isDefault) - Number(left.isDefault) || left.name.localeCompare(right.name))
+    .map((item) => profileView(item.id, item.name, item.isDefault, decryptProfile(ownerKey, item)));
+}
+
+async function getHostedProfileItem(ownerKey: string, profileId: string) {
+  const result = await getDynamoClient().send(new GetCommand({
+    TableName: getDynamoTableName(),
+    Key: { pk: ownerPartitionKey(ownerKey), sk: profileSortKey(profileId) },
+    ConsistentRead: true,
+  }));
+  return result.Item as CypressProfileItem | undefined;
 }
 
 export async function getCypressProfileSecret(ownerKey: string, profileId: string) {
   if (config.isLocal) {
     const stored = (await readLocalStore()).profiles.find((profile) => profile.ownerKey === ownerKey && profile.id === profileId);
     if (!stored) return null;
-    const row: CypressProfileRow = { id: stored.id, owner_key: stored.ownerKey, name: stored.name, is_default: stored.isDefault, secret_id: "local" };
-    return { row, profile: profileView(row, stored.environment), environment: stored.environment };
+    return {
+      row: { id: stored.id, ownerKey, name: stored.name, isDefault: stored.isDefault },
+      profile: profileView(stored.id, stored.name, stored.isDefault, stored.environment),
+      environment: stored.environment,
+    };
   }
-  const { data, error } = await getClient().from("cypress_profiles").select("*")
-    .eq("owner_key", ownerKey).eq("id", profileId).maybeSingle();
-  if (error) throw new Error(`Unable to load Cypress profile: ${error.message}`);
-  if (!data) return null;
-  const row = data as CypressProfileRow;
-  const stored = await readSecret<StoredCypressProfile>(row.secret_id);
+  const item = await getHostedProfileItem(ownerKey, profileId);
+  if (!item) return null;
+  const stored = decryptProfile(ownerKey, item);
   return {
-    row,
-    profile: profileView(row, stored),
-    environment: { baseUrl: stored.baseUrl, env: stored.env, secretKeys: storedSecretKeys(stored) } as CypressProfileSecret,
+    row: { id: item.id, ownerKey, name: item.name, isDefault: item.isDefault },
+    profile: profileView(item.id, item.name, item.isDefault, stored),
+    environment: {
+      baseUrl: stored.baseUrl,
+      env: stored.env,
+      secretKeys: storedSecretKeys(stored),
+    } as CypressProfileSecret,
   };
 }
 
@@ -320,31 +286,45 @@ export async function saveCypressProfile(ownerKey: string, input: CypressProfile
       };
       if (existingIndex >= 0) store.profiles[existingIndex] = stored;
       else store.profiles.push(stored);
-      return profileView({ id: stored.id, owner_key: ownerKey, name: stored.name, is_default: stored.isDefault, secret_id: "local" }, stored.environment);
+      return profileView(stored.id, stored.name, stored.isDefault, stored.environment);
     });
   }
-  const client = getClient();
-  const existingResult = profileId
-    ? await client.from("cypress_profiles").select("*").eq("owner_key", ownerKey).eq("id", profileId).maybeSingle()
-    : { data: null, error: null };
-  if (existingResult.error) throw new Error(`Unable to load Cypress profile: ${existingResult.error.message}`);
-  const existing = existingResult.data as CypressProfileRow | null;
+
+  const id = profileId || crypto.randomUUID();
+  const existing = profileId ? await getHostedProfileItem(ownerKey, profileId) : undefined;
   if (profileId && !existing) throw new Error("Cypress profile was not found");
-  const previous = existing ? await readSecret<StoredCypressProfile>(existing.secret_id) : undefined;
-  const stored = toStoredProfile(input, previous);
-  const secretId = existing?.secret_id || await createSecret(stored, `cypress:${ownerKey}:${crypto.randomUUID()}`, "User Cypress environment profile");
-  if (existing) await updateSecret(secretId, stored);
-  if (input.isDefault) await client.from("cypress_profiles").update({ is_default: false }).eq("owner_key", ownerKey);
-  const payload = { owner_key: ownerKey, name: input.name, is_default: input.isDefault, secret_id: secretId, updated_at: new Date().toISOString() };
-  const result = existing
-    ? await client.from("cypress_profiles").update(payload).eq("owner_key", ownerKey).eq("id", existing.id).select().single()
-    : await client.from("cypress_profiles").insert(payload).select().single();
-  if (result.error) {
-    if (!existing) await deleteSecret(secretId).catch(() => undefined);
-    throw new Error(`Unable to save Cypress profile: ${result.error.message}`);
+  const stored = toStoredProfile(input, existing ? decryptProfile(ownerKey, existing) : undefined);
+  const item: CypressProfileItem = {
+    pk: ownerPartitionKey(ownerKey),
+    sk: profileSortKey(id),
+    entity: DYNAMO_ENTITY.CYPRESS_PROFILE,
+    id,
+    name: input.name,
+    isDefault: input.isDefault,
+    encrypted: encryptValue(stored, profileContext(ownerKey, id)),
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (input.isDefault) {
+    const otherDefaults = (await listHostedProfileItems(ownerKey)).filter((profile) => profile.isDefault && profile.id !== id);
+    if (otherDefaults.length > 98) throw new Error("Too many Cypress profiles");
+    await getDynamoClient().send(new TransactWriteCommand({
+      TransactItems: [
+        ...otherDefaults.map((profile) => ({
+          Update: {
+            TableName: getDynamoTableName(),
+            Key: { pk: profile.pk, sk: profile.sk },
+            UpdateExpression: "SET isDefault = :false, updatedAt = :now",
+            ExpressionAttributeValues: { ":false": false, ":now": item.updatedAt },
+          },
+        })),
+        { Put: { TableName: getDynamoTableName(), Item: item } },
+      ],
+    }));
+  } else {
+    await getDynamoClient().send(new PutCommand({ TableName: getDynamoTableName(), Item: item }));
   }
-  const row = result.data as CypressProfileRow;
-  return profileView(row, stored);
+  return profileView(id, item.name, item.isDefault, stored);
 }
 
 export async function removeCypressProfile(ownerKey: string, profileId: string) {
@@ -356,12 +336,12 @@ export async function removeCypressProfile(ownerKey: string, profileId: string) 
       return true;
     });
   }
-  const client = getClient();
-  const { data, error } = await client.from("cypress_profiles").delete().eq("owner_key", ownerKey).eq("id", profileId).select("secret_id").maybeSingle();
-  if (error) throw new Error(`Unable to delete Cypress profile: ${error.message}`);
-  if (!data) return false;
-  await deleteSecret(data.secret_id as string);
-  return true;
+  const result = await getDynamoClient().send(new DeleteCommand({
+    TableName: getDynamoTableName(),
+    Key: { pk: ownerPartitionKey(ownerKey), sk: profileSortKey(profileId) },
+    ReturnValues: "ALL_OLD",
+  }));
+  return Boolean(result.Attributes);
 }
 
 export async function createRunProfileSnapshot(requestId: string, snapshot: RunProfileSnapshot) {
@@ -369,19 +349,21 @@ export async function createRunProfileSnapshot(requestId: string, snapshot: RunP
     await updateLocalStore((store) => {
       const now = Date.now();
       for (const [id, stored] of Object.entries(store.snapshots)) if (Date.parse(stored.expiresAt) <= now) delete store.snapshots[id];
-      store.snapshots[requestId] = { value: snapshot, expiresAt: new Date(now + 60 * 60 * 1000).toISOString() };
+      store.snapshots[requestId] = { value: snapshot, expiresAt: new Date(now + TIME.PROFILE_SNAPSHOT_TTL_SECONDS * TIME.MILLISECONDS_PER_SECOND).toISOString() };
     });
     return;
   }
-  const { error: purgeError } = await getClient().rpc("purge_expired_cypress_run_profiles");
-  if (purgeError) throw new Error(`Unable to purge expired Cypress profiles: ${purgeError.message}`);
-  const secretId = await createSecret(snapshot, `run:${requestId}`, "Short-lived Cypress run profile");
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-  const { error } = await getClient().from("cypress_run_profiles").insert({ request_id: requestId, secret_id: secretId, expires_at: expiresAt });
-  if (error) {
-    await deleteSecret(secretId).catch(() => undefined);
-    throw new Error(`Unable to prepare Cypress run profile: ${error.message}`);
-  }
+  await getDynamoClient().send(new PutCommand({
+    TableName: getDynamoTableName(),
+    Item: {
+      pk: snapshotKey(requestId),
+      sk: DYNAMO_KEY.SNAPSHOT,
+      entity: DYNAMO_ENTITY.RUN_PROFILE_SNAPSHOT,
+      encrypted: encryptValue(snapshot, `snapshot:${requestId}`),
+      expiresAtEpoch: Math.floor(Date.now() / TIME.MILLISECONDS_PER_SECOND) + TIME.PROFILE_SNAPSHOT_TTL_SECONDS,
+    },
+    ConditionExpression: "attribute_not_exists(pk)",
+  }));
 }
 
 export async function consumeRunProfileSnapshot(requestId: string) {
@@ -392,7 +374,12 @@ export async function consumeRunProfileSnapshot(requestId: string) {
       return stored && Date.parse(stored.expiresAt) > Date.now() ? stored.value : null;
     });
   }
-  const { data, error } = await getClient().rpc("consume_cypress_run_profile", { run_request_id: requestId });
-  if (error) throw new Error(`Unable to load Cypress run profile: ${error.message}`);
-  return typeof data === "string" ? JSON.parse(data) as RunProfileSnapshot : null;
+  const result = await getDynamoClient().send(new DeleteCommand({
+    TableName: getDynamoTableName(),
+    Key: { pk: snapshotKey(requestId), sk: DYNAMO_KEY.SNAPSHOT },
+    ReturnValues: "ALL_OLD",
+  }));
+  const item = result.Attributes as { encrypted?: EncryptedValue; expiresAtEpoch?: number } | undefined;
+  if (!item?.encrypted || !item.expiresAtEpoch || item.expiresAtEpoch <= Math.floor(Date.now() / TIME.MILLISECONDS_PER_SECOND)) return null;
+  return decryptValue<RunProfileSnapshot>(item.encrypted, `snapshot:${requestId}`);
 }

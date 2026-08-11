@@ -3,29 +3,30 @@ import { z } from "zod";
 
 import { verifyGitHubActionsIdentity } from "@/lib/github-actions-oidc";
 import { config } from "@/lib/config";
+import { AUTHORIZATION, HTTP_HEADER, HTTP_STATUS } from "@/lib/domain-constants";
 import { consumeRunProfileSnapshot } from "@/lib/user-settings";
 
 const querySchema = z.string().uuid();
 
 export async function GET(request: Request) {
-  if (config.isLocal) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const authorization = request.headers.get("authorization");
-  if (!authorization?.startsWith("Bearer ")) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (config.isLocal) return NextResponse.json({ error: "Not found" }, { status: HTTP_STATUS.NOT_FOUND });
+  const authorization = request.headers.get(HTTP_HEADER.AUTHORIZATION);
+  if (!authorization?.startsWith(AUTHORIZATION.BEARER_PREFIX)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: HTTP_STATUS.UNAUTHORIZED });
   }
   try {
-    await verifyGitHubActionsIdentity(authorization.slice(7));
+    await verifyGitHubActionsIdentity(authorization.slice(AUTHORIZATION.BEARER_PREFIX.length));
   } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: HTTP_STATUS.UNAUTHORIZED });
   }
   const parsed = querySchema.safeParse(new URL(request.url).searchParams.get("requestId"));
-  if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: HTTP_STATUS.BAD_REQUEST });
   try {
     const profile = await consumeRunProfileSnapshot(parsed.data);
-    if (!profile) return NextResponse.json({ error: "Profile unavailable or expired" }, { status: 404 });
+    if (!profile) return NextResponse.json({ error: "Profile unavailable or expired" }, { status: HTTP_STATUS.NOT_FOUND });
     return NextResponse.json(profile, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     console.error("Unable to provide Cypress workflow profile", error);
-    return NextResponse.json({ error: "Unable to provide Cypress workflow profile" }, { status: 502 });
+    return NextResponse.json({ error: "Unable to provide Cypress workflow profile" }, { status: HTTP_STATUS.BAD_GATEWAY });
   }
 }

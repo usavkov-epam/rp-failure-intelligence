@@ -13,17 +13,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ACTIVE_PROJECT_COOKIE } from "@/lib/active-project";
 import { config } from "@/lib/config";
 import { resolveLaunchProfileId } from "@/lib/configuration-mappings";
+import { DISPLAY, FORM_VALUE, VALIDATION_LIMITS } from "@/lib/domain-constants";
 import { getDashboardData, resolveReportSelection } from "@/lib/reportportal";
+import { getTestRunner } from "@/lib/test-runners";
 import { getUserOwnerKey } from "@/lib/user-identity";
 import { getDashboardConnection, listCypressProfiles } from "@/lib/user-settings";
 
 export const dynamic = "force-dynamic";
 
 const reportSelectionSchema = z.object({
-  project: z.string().trim().min(1).max(100).default("cypress-nightly"),
-  launchName: z.string().trim().min(1).max(200).default("runNightlyEurekaReleaseTests-non-ecs"),
+  project: z.string().trim().min(1).max(VALIDATION_LIMITS.KEY_LENGTH),
+  launchName: z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH),
   launchId: z.coerce.number().int().positive().optional(),
-  historyDepth: z.coerce.number().int().min(1).max(30).default(10),
+  historyDepth: z.coerce.number().int().min(1).max(Math.max(...DISPLAY.HISTORY_DEPTH_OPTIONS)),
 });
 
 function queryValue(value: string | string[] | undefined) {
@@ -47,10 +49,10 @@ export default async function Home({ searchParams }: PageProps<"/">) {
   });
   const fields = Object.fromEntries(dashboard.settings.reportFields.map((field) => {
     const submitted = queryValue(parameters[`field.${field.key}`]);
-    const requested = submitted === "__any" ? undefined : submitted;
+    const requested = submitted === FORM_VALUE.REPORT_ANY ? undefined : submitted;
     const legacyTeam = field.reportPortalParameter === "filter.cnt.name" ? queryValue(parameters.team) : undefined;
     const value = (requested ?? legacyTeam ?? field.defaultValue).trim();
-    if (value.length > 200 || (field.required && !value)) throw new Error(`Invalid value for ${field.label}`);
+    if (value.length > VALIDATION_LIMITS.FIELD_VALUE_LENGTH || (field.required && !value)) throw new Error(`Invalid value for ${field.label}`);
     if (field.type === "enum" && value && !field.options.includes(value)) throw new Error(`Invalid value for ${field.label}`);
     return [field.key, value];
   }));
@@ -87,6 +89,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     reportFields={dashboard.settings.reportFields}
     cypressConfigFields={dashboard.settings.cypressConfigFields}
     suggestedProfileId={suggestedProfileId}
+    runner={getTestRunner().descriptor}
     localMode={config.isLocal}
     user={{ name: userName }}
   />;

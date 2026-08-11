@@ -1,12 +1,12 @@
 import "server-only";
 
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { decryptJson, encryptJson, type EncryptedEnvelope } from "./authenticated-encryption";
+import { config } from "./config";
 import type { CypressRunDetails, CypressRunRecord } from "./types";
 import type { CypressProfileSecret, DashboardSettingsInput, RunProfileSnapshot } from "./user-settings-schema";
-import { config } from "./config";
 
 export interface LocalProfileRecord {
   id: string;
@@ -31,37 +31,25 @@ export interface LocalStoreData {
   snapshots: Record<string, { value: RunProfileSnapshot; expiresAt: string }>;
 }
 
-interface EncryptedEnvelope {
-  version: 1;
-  iv: string;
-  tag: string;
-  ciphertext: string;
-}
-
 const emptyStore = (): LocalStoreData => ({ version: 1, profiles: [], runs: [], snapshots: {} });
 let writeQueue: Promise<unknown> = Promise.resolve();
+const ENCRYPTION_NAMESPACE = "failure-intelligence-local-store";
 
 function storagePath() {
   return path.join(config.localStorage.dataDirectory, "store.enc.json");
 }
 
-function encryptionKey() {
+function encryptionSecret() {
   if (!config.isLocal || !config.localStorage.encryptionKey) throw new Error("Encrypted local storage is not configured");
-  return createHash("sha256").update("failure-intelligence-local-store\0").update(config.localStorage.encryptionKey).digest();
+  return config.localStorage.encryptionKey;
 }
 
 function encrypt(value: LocalStoreData): EncryptedEnvelope {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
-  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value), "utf8"), cipher.final()]);
-  return { version: 1, iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), ciphertext: ciphertext.toString("base64") };
+  return encryptJson(value, { secret: encryptionSecret(), namespace: ENCRYPTION_NAMESPACE });
 }
 
 function decrypt(envelope: EncryptedEnvelope): LocalStoreData {
-  if (envelope.version !== 1) throw new Error("Unsupported local storage format");
-  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), Buffer.from(envelope.iv, "base64"));
-  decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
-  return JSON.parse(Buffer.concat([decipher.update(Buffer.from(envelope.ciphertext, "base64")), decipher.final()]).toString("utf8")) as LocalStoreData;
+  return decryptJson<LocalStoreData>(envelope, { secret: encryptionSecret(), namespace: ENCRYPTION_NAMESPACE });
 }
 
 export async function readLocalStore(): Promise<LocalStoreData> {

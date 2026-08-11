@@ -1,3 +1,5 @@
+import { GITHUB } from "./domain-constants";
+
 export const CYPRESS_PROFILE_OIDC_AUDIENCE = "rp-failure-intelligence:cypress-profile";
 
 export interface GitHubActionsIdentityClaims {
@@ -39,6 +41,6 @@ export function hasTrustedGitHubActionsIdentity(
     && normalized(claims.repository_owner) === normalized(policy.owner)
     && claims.workflow_ref === workflowRef
     && claims.ref === ref
-    && claims.event_name === "workflow_dispatch"
-    && claims.runner_environment === "github-hosted";
+    && claims.event_name === GITHUB.ACTIONS_DISPATCH_EVENT
+    && claims.runner_environment === GITHUB.ACTIONS_RUNNER_ENVIRONMENT;
 }

@@ -4,6 +4,7 @@ import { analyzeHistory, mergeCurrentFailuresWithHistory } from "./analytics";
 import { collectAllPages, type PageResult } from "./pagination";
 import { normalizeReportPortalProjectNames } from "./reportportal-projects";
 import type { DashboardData, HistoryEntry, ReportPortalItem, ReportSelection, ReportSourceOptions } from "./types";
+import { REPORT_PORTAL, REPORT_STATUS } from "./domain-constants";
 import type { ReportFieldMapping } from "./user-settings-schema";
 
 type Page<T> = PageResult<T>;
@@ -32,7 +33,7 @@ export async function loadReportPortalProjects(connection: ReportPortalConnectio
   }
 
   const projectPage = await fetchAllReportPortalPages<unknown>(connection, "project/list", {
-    "page.size": 200,
+    "page.size": REPORT_PORTAL.API_PAGE_SIZE,
   });
   return normalizeReportPortalProjectNames(projectPage);
 }
@@ -126,11 +127,11 @@ export async function resolveReportSelection(connection: ReportPortalConnection,
   let launches = [selection.launchName];
   try {
     const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
-      "page.size": 200,
+      "page.size": REPORT_PORTAL.API_PAGE_SIZE,
       "page.sort": "startTime,DESC",
     });
     launches = [...new Set(launchPage.content
-      .filter(({ status }) => status !== "IN_PROGRESS")
+      .filter(({ status }) => status !== REPORT_STATUS.IN_PROGRESS)
       .map(({ name }) => name)
       .filter(Boolean))];
   } catch {
@@ -145,11 +146,11 @@ export async function resolveReportSelection(connection: ReportPortalConnection,
   try {
     const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
       "filter.eq.name": launchName,
-      "page.size": 200,
+      "page.size": REPORT_PORTAL.API_PAGE_SIZE,
       "page.sort": "startTime,DESC",
     });
     launchRuns = launchPage.content.filter((launch) => (
-      launch.name === launchName && launch.status !== "IN_PROGRESS"
+      launch.name === launchName && launch.status !== REPORT_STATUS.IN_PROGRESS
     ));
   } catch {
     // Data loading will expose the integration error after selection resolution.
@@ -178,10 +179,10 @@ export async function loadReportSourceChildren(connection: ReportPortalConnectio
   launchRuns: ReportSourceOptions["launchRuns"];
 }> {
   const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
-    "page.size": 200,
+    "page.size": REPORT_PORTAL.API_PAGE_SIZE,
     "page.sort": "startTime,DESC",
   });
-  const completedLaunches = launchPage.content.filter(({ status }) => status !== "IN_PROGRESS");
+  const completedLaunches = launchPage.content.filter(({ status }) => status !== REPORT_PORTAL.IN_PROGRESS_STATUS);
   const launches = [...new Set(completedLaunches.map(({ name }) => name).filter(Boolean))];
   const launchName = requestedLaunchName && launches.includes(requestedLaunchName)
     ? requestedLaunchName
@@ -191,12 +192,12 @@ export async function loadReportSourceChildren(connection: ReportPortalConnectio
 
   const runPage = await fetchAllPages<Launch>(connection, project, "launch", {
     "filter.eq.name": launchName,
-    "page.size": 200,
+    "page.size": REPORT_PORTAL.API_PAGE_SIZE,
     "page.sort": "startTime,DESC",
   });
   const launchRuns = runPage.content
     .filter((launch) => launch.name === launchName)
-    .filter(({ status }) => status !== "IN_PROGRESS")
+    .filter(({ status }) => status !== REPORT_STATUS.IN_PROGRESS)
     .map(({ id, number, status, startTime }) => ({ id, number, status, startTime }));
 
   return { launchName, launches, launchRuns };
@@ -206,12 +207,12 @@ async function loadLiveData(connection: ReportPortalConnection, selection: Repor
   const { project, launchName, launchId, historyDepth } = selection;
   const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
     "filter.eq.name": launchName,
-    "page.size": 200,
+    "page.size": REPORT_PORTAL.API_PAGE_SIZE,
     "page.sort": "startTime,DESC",
   });
   const launch = launchPage.content.find((candidate) => (
     candidate.name === launchName
-    && candidate.status !== "IN_PROGRESS"
+    && candidate.status !== REPORT_STATUS.IN_PROGRESS
     && (launchId === undefined || candidate.id === launchId)
   ));
   if (!launch) throw new Error(`No completed launch named ${launchName} was found`);
@@ -219,22 +220,22 @@ async function loadLiveData(connection: ReportPortalConnection, selection: Repor
   const baseParams = {
     launchId: launch.id,
     providerType: "launch",
-    "page.size": 1000,
+    "page.size": REPORT_PORTAL.HISTORY_API_PAGE_SIZE,
     "filter.eq.hasStats": "true",
     ...buildReportPortalFilters(selection, fields),
   };
   const [suite, failed] = await Promise.all([
     fetchAllPages<ReportPortalItem>(connection, project, "item/v2", baseParams),
-    fetchAllPages<ReportPortalItem>(connection, project, "item/v2", { ...baseParams, "filter.in.status": "FAILED" }),
+    fetchAllPages<ReportPortalItem>(connection, project, "item/v2", { ...baseParams, "filter.in.status": REPORT_STATUS.FAILED }),
   ]);
   const history = failed.content.length
     ? await fetchAllPages<HistoryEntry>(connection, project, "item/history", {
       "filter.eq.launchId": launch.id,
-      "filter.in.status": "FAILED",
+      "filter.in.status": REPORT_STATUS.FAILED,
       ...buildReportPortalFilters(selection, fields),
       historyDepth,
       type: "line",
-      "page.size": 1000,
+      "page.size": REPORT_PORTAL.HISTORY_API_PAGE_SIZE,
     })
     : { content: [] };
   const failureHistory = mergeCurrentFailuresWithHistory(failed.content, history.content);

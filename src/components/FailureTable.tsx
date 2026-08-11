@@ -13,8 +13,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { FailureRow, Risk } from "@/lib/types";
+import { REPORT_STATUS, RISK } from "@/lib/domain-constants";
 
-const riskVariants: Record<Risk, "destructive" | "secondary" | "outline" | "default"> = { Persistent: "destructive", "High risk": "secondary", Intermittent: "outline", Isolated: "default" };
+const riskVariants: Record<Risk, "destructive" | "secondary" | "outline" | "default"> = {
+  [RISK.PERSISTENT]: "destructive",
+  [RISK.HIGH]: "secondary",
+  [RISK.INTERMITTENT]: "outline",
+  [RISK.ISOLATED]: "default",
+};
 const columnWidths: Record<string, string> = {
   select: "w-12",
   risk: "w-28",
@@ -29,7 +35,7 @@ const columnWidths: Record<string, string> = {
 };
 
 function RecentRuns({ row }: { row: FailureRow }) {
-  return <div className="flex h-7 min-w-36 items-center gap-[3px]" aria-label={`Run history, oldest to newest: ${row.statuses.join(", ")}`}>{row.statuses.map((status, index) => <Tooltip key={`${row.launchNumbers[index]}:${index}`}><TooltipTrigger asChild><span className={`h-5 min-w-1 flex-1 rounded-[2px] ${status === "PASSED" ? "bg-emerald-600" : status === "FAILED" ? "bg-destructive" : "bg-muted-foreground/30"} ${index === row.statuses.length - 1 ? "ring-2 ring-foreground ring-offset-1" : ""}`} /></TooltipTrigger><TooltipContent>{row.launchNumbers[index] ? `Launch #${row.launchNumbers[index]}` : `Run ${index + 1}`}: {status.toLowerCase()}</TooltipContent></Tooltip>)}</div>;
+  return <div className="flex h-7 min-w-36 items-center gap-[3px]" aria-label={`Run history, oldest to newest: ${row.statuses.join(", ")}`}>{row.statuses.map((status, index) => <Tooltip key={`${row.launchNumbers[index]}:${index}`}><TooltipTrigger asChild><span className={`h-5 min-w-1 flex-1 rounded-[2px] ${status === REPORT_STATUS.PASSED ? "bg-emerald-600" : status === REPORT_STATUS.FAILED ? "bg-destructive" : "bg-muted-foreground/30"} ${index === row.statuses.length - 1 ? "ring-2 ring-foreground ring-offset-1" : ""}`} /></TooltipTrigger><TooltipContent>{row.launchNumbers[index] ? `Launch #${row.launchNumbers[index]}` : `Run ${index + 1}`}: {status.toLowerCase()}</TooltipContent></Tooltip>)}</div>;
 }
 
 export default function FailureTable({ rows, historyDepth, sourceRepository, onSelectedSpecs }: {

@@ -5,7 +5,8 @@ import { getAuthorizedSession } from "@/auth";
 import RunsView from "@/components/RunsView";
 import { ACTIVE_PROJECT_COOKIE } from "@/lib/active-project";
 import { config } from "@/lib/config";
-import { getRunChannel, listCypressRuns } from "@/lib/cypress-run-store";
+import { listCypressRuns } from "@/lib/cypress-run-store";
+import { getTestRunner } from "@/lib/test-runners";
 import { getUserOwnerKey } from "@/lib/user-identity";
 import { getDashboardSettings } from "@/lib/user-settings";
 
@@ -15,20 +16,14 @@ export default async function RunsPage() {
   const session = await getAuthorizedSession();
   if (!session) redirect("/signin");
   const ownerKey = getUserOwnerKey(session);
-  const { url, anonKey } = config.supabase;
-  if (!config.isLocal && (!url || !anonKey)) throw new Error("Supabase run history is not configured");
-
   const [initialRuns, dashboardSettings] = await Promise.all([listCypressRuns(ownerKey), getDashboardSettings(ownerKey)]);
   let runs = initialRuns;
-  if (config.isLocal) {
-    const { recoverInterruptedLocalCypressRuns } = await import("@/lib/local-cypress-runner");
-    if (await recoverInterruptedLocalCypressRuns(runs)) runs = await listCypressRuns(ownerKey);
-  }
+  const runner = getTestRunner();
+  if (await runner.reconcile(runs)) runs = await listCypressRuns(ownerKey);
   return <RunsView
     initialRuns={runs}
-    channelName={getRunChannel(ownerKey)}
-    supabaseUrl={url || ""}
-    supabaseAnonKey={anonKey || ""}
+    webPushPublicKey={config.aws.webPushPublicKey || ""}
+    runner={runner.descriptor}
     localMode={config.isLocal}
     userName={session.user.name || session.user.githubLogin || "User"}
     activeProject={(await cookies()).get(ACTIVE_PROJECT_COOKIE)?.value || dashboardSettings?.defaultProject}

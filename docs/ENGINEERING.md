@@ -1,439 +1,120 @@
-# Failure Intelligence Engineering Guide
+# Engineering guide
 
-## Purpose
+## Product boundary
 
-Failure Intelligence is an authenticated, read-only analytics application for investigating failed automated tests stored in ReportPortal. It uses a persistent user-selected ReportPortal project as global context and lets an authorized user select a launch name, specific completed run, configured report fields, and history depth; inspect failure patterns; and open the corresponding Cypress source, ReportPortal log, or TestRail case.
+ReportPortal is the source of truth for failure analytics. Failure intelligence normalizes its launches and test history, enriches failures with source links and optional TestRail data, and dispatches selected Cypress specs. It does not copy ReportPortal result history into its application database.
 
-ReportPortal is the source of truth for failure data and analytics. Hosted mode uses Supabase for Cypress workflow metadata and user-owned configuration, with secret values protected by Supabase Vault authenticated encryption. The self-contained local Docker image uses encrypted volume-backed storage instead. The application contains no bundled report or fallback test data.
+Hosted mode is multi-user and authenticated through GitHub. DynamoDB holds only application configuration and run workflow state. Local mode is single-user, unauthenticated, and stores an encrypted envelope in a Docker volume.
 
-## Product Boundaries
-
-The application:
-
-- Reads projects, launches, test items, and item history from ReportPortal.
-- Calculates failure metrics and risk categories in memory for each request.
-- Authenticates users with GitHub OAuth and restricts access by active organization membership or a static GitHub-login allowlist.
-- Creates read-only links to a configured GitHub source repository.
-- Optionally creates TestRail links from test case identifiers.
-- Dispatches explicitly selected Cypress specs to a bounded GitHub Actions workflow in hosted mode, or executes them with an internal Cypress CLI runner in local Docker mode.
-- Tracks dispatched workflow status, conclusion, duration, and artifact availability through signed GitHub webhooks, Supabase, and the GitHub Actions artifact API.
-- Deploys as a Next.js application on Vercel.
-
-The application does not:
-
-- Run Cypress tests inside the hosted dashboard or Vercel runtime.
-- Modify the configured source repository.
-- Store ReportPortal reports or OAuth tokens in Supabase, or store API/test credentials outside Vault.
-- Show bundled, synthetic, cached, or cross-launch fallback report data.
-- Treat the single-user local Docker image as a multi-user or network-facing deployment.
-
-## Primary Use Cases
-
-### Investigate a failed launch
-
-1. Sign in with GitHub.
-2. Confirm the active ReportPortal project shown in the global header, or change it in Settings.
-3. Select a completed launch name.
-4. Keep the latest completed run selected or choose a historical run. Historical selections display a warning.
-5. Enter any configured ReportPortal filter fields and choose a history depth.
-6. Review current failures, historical failure rate, streaks, transitions, and risk categories.
-7. Open the source spec, ReportPortal log, or TestRail case.
-
-### Share a report selection
-
-The project is a persistent user setting and global context. Launch name, launch ID, mapped filter values, and history depth are encoded as validated URL query parameters. An authorized colleague using the same active project can open the URL and reproduce the exact run selection. Authentication is still required.
-
-### Handle an empty result
-
-A valid ReportPortal response with no matching tests or failures is not an error. Metrics remain zero and the grid displays `No data`.
-
-### Handle an integration failure
-
-A ReportPortal transport or API failure produces no report rows. The UI displays an error toast and marks the source as a load error. It never substitutes another project, configured filter, or launch.
-
-## System Architecture
+## Hosted data flow
 
 ```mermaid
 flowchart LR
-  Browser[Browser] -->|HTTPS and Auth.js cookie| Next[Next.js App Router]
-  Next -->|OAuth and optional membership API| GitHubAuth[GitHub OAuth/API]
-  Next -->|User-owned Bearer API token| RP[ReportPortal]
-  Next -->|Analyzed DTO| Browser
-  Next -->|workflow_dispatch and artifact lookup| Actions[GitHub Actions]
-  Actions -->|Signed workflow_run webhook| Next
-  Next -->|Service role: metadata, Vault, broadcast| Supabase[Supabase Postgres, Vault, Realtime]
-  Supabase -->|Opaque Broadcast event| Browser
-  Browser -->|Read-only source link| GitHubRepo[GitHub source repository]
-  Browser -->|Case link| TestRail[TestRail]
-  Next -->|Production runtime| Vercel[Vercel]
+  Browser -->|Auth.js session| Next[Next.js on Vercel]
+  Next -->|user API key| RP[ReportPortal]
+  Next -->|Vercel OIDC, short-lived role| DDB[DynamoDB]
+  Next -->|workflow dispatch| GH[GitHub Actions]
+  GH -->|signed workflow_run webhook| Next
+  DDB -->|DynamoDB Stream| Lambda[Notifier Lambda]
+  Lambda -->|Web Push| Browser
+  Lambda -->|failed stream records| DLQ[SQS DLQ]
 ```
 
-### Runtime layers
+The webhook remains a Next.js route because GitHub already needs the public application URL. Adding API Gateway or another public Lambda would duplicate an endpoint and introduce another priced service. A run update written by the webhook reaches the browser through the DynamoDB stream, so the browser does not poll in hosted mode. Returning to a visible tab performs one reconciliation request in case a push was missed.
 
-| Layer | Ownership | Responsibilities |
+Local mode keeps a five-second Runs-page refresh because execution occurs in the container and there is no AWS event path.
+
+## DynamoDB model
+
+One Standard-class provisioned table uses `pk` and `sk` string keys, a `NEW_IMAGE` stream, and `expiresAtEpoch` TTL.
+
+| Entity | Partition key | Sort key | Notes |
+| --- | --- | --- | --- |
+| Dashboard settings | `OWNER#<owner>` | `SETTINGS` | Entire settings document is application-encrypted |
+| Cypress profile | `OWNER#<owner>` | `PROFILE#<uuid>` | Name/default metadata is clear; environment is encrypted |
+| Cypress run | `OWNER#<owner>` | `RUN#<ISO time>#<uuid>` | Latest 20 are queried in reverse order |
+| Run lookup | `RUN_LOOKUP#<uuid>` | `LOOKUP` | Resolves webhook request IDs without a scan |
+| Profile snapshot | `SNAPSHOT#<uuid>` | `SNAPSHOT` | Encrypted, one-hour TTL, atomically consumed with delete-and-return |
+| Push subscription | `OWNER#<owner>` | `PUSH#<endpoint hash>` | Browser endpoint and public key material; stale endpoints are deleted |
+
+No global secondary index is required. Settings/profile names and run metadata are not treated as credentials. ReportPortal/TestRail keys, profile environment content, and snapshot content are AES-256-GCM encrypted by `src/lib/secure-value.ts` before they leave the server. The owner/record context is authenticated additional data, preventing ciphertext from being moved between users or entity types.
+
+`DATA_ENCRYPTION_KEY` remains a server-only Vercel secret. Rotating it currently requires an explicit application-level re-encryption procedure; replacing it without re-encryption makes existing encrypted records unreadable. This project intentionally has no Supabase migration compatibility because the AWS implementation is a clean replacement.
+
+## Identity and authorization
+
+- Auth.js issues encrypted JWT sessions after GitHub OAuth and organization/user allowlist checks.
+- The immutable GitHub login-derived owner key scopes every settings, profile, run, and subscription operation.
+- Vercel obtains AWS credentials with its OIDC token. The IAM trust policy matches the Vercel team, project, and production environment exactly.
+- The Vercel role can read/write only the application table. No permanent AWS access key is configured.
+- GitHub workflow profile delivery still validates the short-lived GitHub Actions OIDC identity, repository, workflow, branch, event, and GitHub-hosted runner before consuming a snapshot.
+- The GitHub webhook validates its HMAC SHA-256 signature, repository, workflow path, and request UUID before updating a run.
+
+## Web Push
+
+The Runs page registers `public/push-worker.js` and asks the user before requesting notification permission. A subscription is posted through an authenticated route and stored under the user's partition. The public VAPID key is intentionally sent to the browser; the private VAPID key is an SSM Standard SecureString available only to the notifier Lambda.
+
+For each run stream image, the Lambda queries subscriptions for that owner and sends an opaque status message containing the request ID. An open page treats that message only as an invalidation signal and reloads `/api/runs` under the normal Auth.js session. Expired push endpoints are removed. Transient failures use partial batch retry, then the SQS DLQ.
+
+## AWS cost boundary
+
+The CDK templates deliberately provision only:
+
+- one DynamoDB Standard table at fixed 5 RCU / 5 WCU, with no autoscaling, PITR, backups, global replicas, or indexes;
+- one 256 MB Lambda invoked by DynamoDB Streams;
+- one SQS Standard DLQ;
+- one CloudWatch log group with seven-day retention;
+- one IAM OIDC provider and role; and
+- the CDK bootstrap S3 bucket/assets required by CDK.
+
+This configuration is designed for a low-volume application to stay inside AWS monthly free-tier allowances, but AWS free quotas are shared across the payer account and overage is billable. Infrastructure code cannot guarantee a zero invoice. Configure AWS Budgets/free-tier alerts and monitor the account. S3 bootstrap storage is the acknowledged exception and may be billable depending on account eligibility and aggregate usage.
+
+## Important modules
+
+| Path | Responsibility |
+| --- | --- |
+| `src/lib/reportportal.ts` | ReportPortal pagination, launches, items, and history contracts |
+| `src/lib/analytics.ts` | Failure identity, history, risk, and aggregate calculations |
+| `src/lib/user-settings.ts` | Settings, profiles, encryption boundary, and one-time snapshots |
+| `src/lib/cypress-run-store.ts` | Hosted DynamoDB/local volume run repository |
+| `src/lib/test-runners` | Provider-neutral runner contract, registry, and provider adapters |
+| `src/lib/domain-constants.ts` | Shared domain, protocol, storage, validation, and time constants |
+| `src/lib/authenticated-encryption.ts` | Shared AES-256-GCM authenticated-encryption primitive |
+| `src/lib/dynamodb.ts` | DynamoDB client and Vercel OIDC credential provider |
+| `src/lib/secure-value.ts` | Hosted AES-256-GCM value encryption |
+| `src/app/api/webhooks/github/route.ts` | Signed GitHub workflow webhook |
+| `infra/functions/push-notifier.ts` | Stream-to-Web-Push notification Lambda |
+| `infra/lib` | CDK storage, notifier, and Vercel IAM stacks |
+| `src/lib/local-store.ts` | Encrypted local Docker persistence |
+| `src/lib/local-cypress-runner.ts` | In-container repository and Cypress execution |
+
+## Environment variables
+
+Hosted runtime:
+
+| Variable | Secret | Purpose |
 | --- | --- | --- |
-| `src/app` | Routing and server composition | Authentication boundary, query validation, redirects, Auth.js endpoints, page metadata |
-| `src/auth.ts` | Identity and authorization | GitHub OAuth, mode-specific authorization, JWT/session shaping |
-| `src/lib/config.ts` | Configuration boundary | Server-side environment validation and normalized configuration |
-| `src/lib/reportportal.ts` | Integration boundary | Paginated ReportPortal discovery, launch resolution, item/history loading, explicit empty/error outcomes |
-| `src/lib/pagination.ts` | Pagination utility | Ordered, bounded-concurrency traversal of every page returned by ReportPortal |
-| `src/lib/cypress-runs.ts` | Execution boundary | Authenticated GitHub Actions workflow dispatch and completed-run artifact discovery |
-| `src/lib/local-cypress-runner.ts` | Local execution boundary | Cached source preparation, package installation, bounded Cypress CLI concurrency, cancellation, logs, and artifacts |
-| `src/lib/cypress-run-store.ts` | Persistence boundary | Service-role run storage, user-scoped listing, updates, HMAC channel names, and Broadcast publishing |
-| `src/lib/cypress-run-request.ts` | Validation boundary | Selected spec paths and bounded runner settings |
-| `src/lib/user-settings.ts` | Secret/configuration boundary | Owner-scoped metadata, Supabase Vault operations, profiles, and one-time run snapshots |
-| `src/lib/user-settings-schema.ts` | Validation boundary | HTTPS-only integrations, configurable ReportPortal/Cypress fields, launch mappings, and generic Cypress profile variables |
-| `src/lib/analytics.ts` | Domain logic | Convert ReportPortal history into rows, trends, metrics, and risk categories |
-| `src/lib/types.ts` | Internal contracts | Dashboard DTOs, ReportPortal response shapes, report selection types |
-| `src/components/Dashboard.tsx` | Client UI | Settings-driven selectors, filters, links, metrics, empty states, and run controls |
-| `src/components/FailureTable.tsx` | Client UI | TanStack-powered shadcn table with global sorting, pagination, and row selection |
-| `src/components/RunsView.tsx` | Client UI | Durable run list, Realtime subscription, owner-scoped job/artifact details, and completion toasts |
-| `src/components/SettingsView.tsx` | Client UI | Secret write-only settings and named Cypress profile management |
-| `src/components/ui` | Component source | Repository-owned shadcn components backed by Radix primitives and Tailwind tokens |
-| `src/components/AppHeader.tsx` | Shared navigation | Analysis/runs navigation, refresh, source state, and sign-out controls |
-| `src/app/api/report-source/route.ts` | Authenticated selection API | Dependent launch-name and run discovery for the selected ReportPortal project |
-| `src/app/api/runs/route.ts` | Authenticated run API | User-scoped run listing and validated workflow dispatch |
-| `src/app/api/webhooks/github/route.ts` | Webhook boundary | HMAC, repository, workflow, and request-ID validation; run updates and broadcasts |
-| `supabase/migrations` | Database schema | Run metadata, owner-scoped settings, Vault references, one-time profile claims, constraints, and RLS |
-| `Dockerfile`, `compose.yaml` | Portable runtime | Multi-stage standalone image and the prebuilt-image developer launcher |
-| `src/types` | Framework augmentation | Auth.js session and JWT type extensions |
-
-### Request flow
-
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant P as Protected page
-  participant A as Auth.js
-  participant G as GitHub API
-  participant R as ReportPortal
-
-  U->>P: GET /?launchName=...&launchId=...
-  P->>A: Resolve encrypted session
-  A->>G: Verify identity and optional allowed-org membership
-  alt Not authorized
-    P-->>U: 307 /signin
-  else Authorized
-    P->>R: Discover projects and completed launches
-    P->>P: Validate and normalize selection
-    P->>R: Load launch items and failures
-    alt No failed items
-      P-->>U: Live empty dashboard
-    else Failed items exist
-      P->>R: Load item history
-      P->>P: Analyze history
-      P-->>U: Live dashboard DTO
-    end
-  end
-```
-
-### Cypress execution status flow
-
-```mermaid
-sequenceDiagram
-  participant U as User
-  participant B as Browser
-  participant N as Next.js API
-  participant G as GitHub Actions
-  participant S as Supabase
-
-  U->>B: Select specs and start run
-  B->>N: POST /api/runs
-  N->>S: Insert queued run
-  N->>G: workflow_dispatch
-  G-->>N: 204 Accepted
-  N-->>B: Request UUID and Actions URL
-  G->>N: Signed workflow_run webhook
-  N->>G: List artifacts when completed
-  N->>S: Update durable run and broadcast opaque event
-  S-->>B: Realtime run_changed event
-  B->>N: GET /api/runs
-  N->>S: Load authenticated user's runs
-  N-->>B: Updated list and result metadata
-```
-
-The workflow `run-name` embeds the server-generated request UUID. The webhook validates `X-Hub-Signature-256`, repository, workflow path, and UUID before updating an existing row. The `cypress_runs` table has RLS enabled with no browser policies, so only server routes using the service role can read or mutate rows. New run ownership and authenticated list requests use the immutable GitHub provider account ID.
-
-Realtime uses a public Supabase Broadcast channel whose name is an HMAC of the immutable owner key and `AUTH_SECRET`. Events contain only the opaque request UUID. Receiving an event authorizes nothing; it tells the browser to make one normal authenticated `/api/runs` request. This avoids polling while keeping run data behind Auth.js authorization.
-
-The Analysis page owns failure selection and workflow dispatch. The authenticated `/runs` page owns run history and Realtime status updates, keeping test execution monitoring separate from ReportPortal analysis.
-
-`listCypressRuns()` returns the 20 newest rows for the authenticated GitHub login. Rows remain durable beyond that display window. The app does not poll GitHub or Supabase on a timer.
-
-## Authentication and Authorization
-
-Authentication is mandatory in hosted mode and native source development. The distinct `:local` Docker image has one implicit developer identity and is restricted to a loopback-bound, single-user workstation workflow. See [Local Docker Guide](LOCAL_DOCKER.md).
-
-1. Auth.js redirects the user to GitHub OAuth with identity scopes; `read:org` is added only in organization mode.
-2. `AUTHORIZATION_MODE` selects `organization` or `users`; configuration validation requires a non-empty allowlist for the selected mode.
-3. In `organization` mode, GitHub must report `state: active` for the user in an organization in `AUTH_ALLOWED_ORGS`. The app requests `read:org`, retains the token only in the encrypted HTTP-only JWT, and revalidates membership on protected requests.
-4. In `users` mode, the authenticated GitHub login must match an entry in `AUTH_ALLOWED_USERS`, case-insensitively. The app does not request `read:org` or retain the OAuth access token.
-5. Every protected request revalidates the current identity against the active mode and deployment configuration.
-6. The browser-visible session contains display identity and a non-secret authorization context, but never the GitHub access token.
-
-Production mode never falls back to local mode. Missing hosted OAuth configuration fails application configuration validation. Local mode must be explicitly selected by the dedicated Docker target, which also configures its encrypted persistent storage.
-
-### Local OAuth configuration
-
-The default development origin is `http://localhost:8080`.
-
-Create a GitHub OAuth App with:
-
-- Homepage URL: `http://localhost:8080`
-- Authorization callback URL: `http://localhost:8080/api/auth/callback/github`
-
-Use `localhost`, not `127.0.0.1`, because GitHub callback URLs must match exactly. Never commit the OAuth client secret or Auth.js secret.
-
-## Data Model and Analytics
-
-### Selection
-
-A report selection contains:
-
-- `project`: ReportPortal project name.
-- `launchName`: exact completed launch name.
-- `launchId`: exact completed run ID. When omitted or invalid for the launch name, the latest completed run is selected and the URL is canonicalized.
-- `field.<key>`: a value mapped by user settings to an allowed ReportPortal `filter.eq.*`, `filter.cnt.*`, or `filter.in.*` parameter.
-- `historyDepth`: number of historical launches, constrained to 1 through 30 by the ReportPortal API.
-
-Projects, launch names, and completed runs are discovered server-side. The active project comes from the authenticated user's persistent Settings; changing the launch name defaults to its latest completed run. Selecting an older run preserves its ID in the URL and displays a warning that the analysis is historical.
-
-The report-source form loads its choices as a dependent `Launch name → Run` chain inside the global project context. A changed launch disables the run control while the authenticated selection API loads its options. Starting another launch change aborts the stale browser request; the visible Cancel action aborts the active request and restores the last settled selection. The report itself is not replaced until the user applies a complete selection.
-
-ReportPortal discovery, test-item, failure, and history requests traverse every advertised API page with bounded concurrency. The browser receives the complete analyzed row set; Data Grid sorting and filtering run client-side across all matching rows before UI pagination.
-
-### Metrics
-
-The dashboard currently calculates:
-
-- Current suite failure rate.
-- Number of failed test identities and unique Cypress specs.
-- Historical cohort failure percentage.
-- Immediate regressions, where the current failure follows a passed execution.
-- Current failure streak and status transitions per test.
-- Risk distribution.
-
-Risk categories are derived from returned history:
-
-- `Persistent`: failed in every returned execution.
-- `High risk`: at least eight failed executions, but not every execution.
-- `Isolated`: exactly one failed execution.
-- `Intermittent`: any remaining failure pattern.
-
-These categories are application analytics, not ReportPortal defect types.
-
-### Source links
-
-The GitHub source URL is assembled from deployment-fixed owner, repository, and ref plus the ReportPortal `codeRef`-derived Cypress path. Browser input cannot choose a repository or ref. The integration is link-only and has no GitHub repository token or write operation.
-
-## Error and Empty-State Contract
-
-Keep these outcomes distinct:
-
-| Outcome | `meta.source` | Rows | User feedback |
-| --- | --- | --- | --- |
-| Successful data | `live` | Returned failures | Live data indicator |
-| Successful empty response | `live` | Empty | `No data` in the grid |
-| API/configuration failure | `error` | Empty | Error toast and load-error indicator |
-
-Do not catch an integration failure and return data from another selection. Do not add fixtures to production loader paths. Test fixtures, when introduced, must remain isolated to tests.
-
-## Configuration
-
-All secrets are server-only. No secret may use a `NEXT_PUBLIC_` prefix.
-
-| Variable | Required | Secret | Purpose |
-| --- | --- | --- | --- |
-| `APP_NAME` | No | No | Display name |
-| `AUTH_SECRET` | Yes | Yes | Auth.js JWT/cookie encryption |
-| `AUTH_GITHUB_ID` | Yes | No | GitHub OAuth client ID |
-| `AUTH_GITHUB_SECRET` | Yes | Yes | GitHub OAuth client secret |
-| `AUTHORIZATION_MODE` | No | No | `organization` (default) or `users` |
-| `AUTH_ALLOWED_ORGS` | In organization mode | No | Comma-separated GitHub organization allowlist |
-| `AUTH_ALLOWED_USERS` | In users mode | No | Comma-separated GitHub-login allowlist |
-| `GITHUB_ACTIONS_TOKEN` | For Cypress dispatch | Yes | Fine-grained token with Actions write access to the dashboard repository |
-| `GITHUB_ACTIONS_OWNER` | No | No | Workflow repository owner |
-| `GITHUB_ACTIONS_REPO` | No | No | Workflow repository name |
-| `GITHUB_ACTIONS_WORKFLOW` | No | No | Selected-spec workflow filename |
-| `GITHUB_ACTIONS_REF` | No | No | Workflow ref |
-| `GITHUB_WEBHOOK_SECRET` | For run updates | Yes | Verifies GitHub `workflow_run` HMAC signatures |
-| `NEXT_PUBLIC_SUPABASE_URL` | With run tracking | No | Supabase project URL; required with the other two Supabase values |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | With run tracking | No | Public key used only for opaque Broadcast subscriptions; required with the other two Supabase values |
-| `SUPABASE_SERVICE_ROLE_KEY` | With run tracking | Yes | Server-only database and broadcast access; required with the other two Supabase values |
-| `AUTH_TRUST_HOST` | Deployment-dependent | No | Auth.js trusted-host behavior |
-| `GITHUB_SOURCE_OWNER` | Yes | No | Source link repository owner |
-| `GITHUB_SOURCE_REPO` | Yes | No | Source link repository name |
-| `GITHUB_SOURCE_REF` | Yes | No | Fixed source link branch, tag, or SHA |
-
-Some legacy integration variables may remain in local environments, but application code must not imply support unless the variable is validated and consumed by `src/lib/config.ts`.
-
-The three Supabase values are optional only as a group: if any one is present, configuration validation requires all three. Settings, `/runs`, and dispatch require the group. ReportPortal/TestRail values and Cypress profiles are user configuration, not deployment variables.
-
-### User configuration security
-
-- Auth.js records the immutable GitHub provider account ID in the encrypted JWT; it becomes the owner key for settings and profiles. Sessions created before this feature must sign in again.
-- Browser roles receive no policies or grants for settings, profiles, run snapshots, or Vault. All access passes through authenticated Next.js routes using the service role and an explicit owner filter.
-- Supabase Vault encrypts secret JSON with authenticated encryption and keeps its project root key separate from database data and backups.
-- GET responses return editable non-secret fields and `has...` flags only. Stored API keys and passwords are never returned.
-- User-provided ReportPortal, TestRail, and Cypress base endpoints must use HTTPS.
-- ReportPortal fields, permitted Cypress config overrides, and launch-to-profile mappings are stored in the existing encrypted settings Vault payload. This model is backward-compatible with the legacy name filter and requires no database migration.
-- A Cypress dispatch copies the selected profile into a one-hour Vault secret. An atomic SQL consume operation returns the snapshot once while deleting its row and Vault value in the same transaction. Supabase Cron purges expired unclaimed snapshots and Vault values every 15 minutes.
-- The workflow presents a short-lived GitHub Actions OIDC token. The server verifies its signature, issuer, audience, repository, owner, workflow ref, branch, dispatch event, and GitHub-hosted runner before releasing a snapshot. No reusable profile-delivery secret is stored.
-- User-owned Vault settings are the only supported ReportPortal, TestRail, and Cypress configuration source; no shared GitHub/Vercel profile credential is used.
-- Retrieved Cypress passwords and API keys are registered with GitHub's log masker before tests start. Credential files use mode `0600`, are excluded from artifacts, and are removed by an `always()` cleanup step.
-
-## Local Development
-
-Requirements:
-
-- A supported Node.js version for Next.js 16.
-- Corepack and pnpm 10.15.1.
-- A local GitHub OAuth App configured for port 8080.
-- Membership in an allowed organization or a login in the configured static-user allowlist.
-- Supabase migrations applied; each user configures ReportPortal and Cypress profiles after sign-in.
-- Supabase configuration, a GitHub Actions token, and a webhook secret when developing Cypress dispatch and run tracking.
-
-```bash
-corepack enable
-pnpm install
-cp .env.example .env.local
-pnpm exec auth secret
-pnpm dev
-```
-
-Open `http://localhost:8080`. The package script owns the default host and port:
-
-```json
-"dev": "next dev --hostname localhost --port 8080"
-```
-
-Override the script explicitly only for a deliberate alternate OAuth App configuration. The OAuth callback must use the same origin as the running app.
-
-## Code Guidelines
-
-### General
-
-- Use TypeScript and preserve strict internal contracts.
-- Keep server credentials and third-party API calls in server-only modules.
-- Validate all URL and environment input with Zod at a server boundary and require HTTPS for credential-bearing integrations.
-- Prefer small, explicit functions over speculative abstractions.
-- Keep changes scoped to the owning layer.
-- Do not add repository mutation or test-execution behavior without an explicit architecture decision.
-- Use pnpm exclusively for this application.
-
-### Next.js and React
-
-- Read the versioned Next.js documentation in `node_modules/next/dist/docs/` before relying on framework behavior.
-- Prefer Server Components for authentication, integration calls, and initial data loading.
-- Add `"use client"` only where browser state or interactions require it.
-- Keep protected data access behind `getAuthorizedSession()`; hiding controls in the browser is not authorization.
-- Preserve URL-backed report selection so reports remain reproducible and shareable.
-- Avoid exposing server error internals beyond actionable, non-secret messages.
-
-### ReportPortal integration
-
-- Add endpoints through the server-only ReportPortal client.
-- Use structured URL/query APIs rather than string concatenation.
-- Treat non-2xx responses as errors and retain endpoint/status context.
-- Distinguish an empty successful response from a failed request.
-- Fetch history only when current failed items exist.
-- Treat the current failed-item response as the failure-row source of truth. Enrich it with matching history, and retain unmatched current failures as one-run rows because ReportPortal history can be incomplete.
-- Never substitute fixture or previous-launch data after a live failure.
-- Consider pagination whenever an endpoint can exceed its requested page size.
-
-### UI
-
-- Use repository-owned shadcn components, shared Tailwind tokens, and the compact operational layout.
-- Use selectors for finite server-discovered choices.
-- Use toasts for integration failures and `No data` for valid empty results.
-- Keep source, ReportPortal, and TestRail links visibly distinct and read-only.
-- Ensure controls and the TanStack/shadcn failure table remain usable on mobile and desktop widths.
-
-### Security
-
-- Never log, serialize, or expose OAuth, ReportPortal, GitHub Actions, webhook, or Supabase service-role secrets.
-- Never route credentials through client props or browser storage.
-- Validate selected specs as repository-relative Cypress paths and bound spec count, repetitions, threads, browser, and timeout before dispatch.
-- Resolve Cypress profile IDs only within the authenticated immutable owner key. Keep profile contents in Supabase Vault and out of workflow inputs.
-- Restrict UI-provided Cypress configuration to the bounded non-secret allowlist in `cypress-run-request.ts`; validate it again inside the workflow.
-- Keep `GITHUB_ACTIONS_TOKEN` server-only. Authenticate Cypress profile retrieval with the narrowly validated GitHub Actions OIDC identity.
-- Keep `SUPABASE_SERVICE_ROLE_KEY` and `GITHUB_WEBHOOK_SECRET` server-only. Do not add browser table policies for `cypress_runs`.
-- Keep GitHub source repository configuration server-controlled.
-- Maintain fail-closed authorization when the selected organization or user authorization rule cannot be verified.
-- Do not add an authentication bypass for development or tests.
-- Use isolated test doubles at test boundaries when authentication needs automation.
-
-## Validation and Testing
-
-Run the complete repository check before merging:
+| `APP_MODE=hosted` | No | Enables authenticated hosted behavior |
+| `AUTH_SECRET` | Yes | Auth.js encryption/signing secret |
+| `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET` | Yes | GitHub OAuth App |
+| `AUTHORIZATION_MODE`, allowlist | No | Organization or explicit-user admission |
+| `AWS_REGION` | No | DynamoDB region |
+| `AWS_DYNAMODB_TABLE` | No | CDK-created table name |
+| `AWS_ROLE_ARN` | No | Vercel OIDC-assumable application role |
+| `DATA_ENCRYPTION_KEY` | Yes | Application-level record encryption, minimum 32 characters |
+| `WEB_PUSH_PUBLIC_KEY` | No | VAPID public key |
+| `GITHUB_ACTIONS_TOKEN` | Yes | Workflow dispatch/details access |
+| `GITHUB_WEBHOOK_SECRET` | Yes | Signed workflow webhook validation |
+
+CDK deployment variables are documented in `docs/AWS_INFRASTRUCTURE.md`. Local Docker variables and persistence are documented in `docs/LOCAL_DOCKER.md`.
+
+## Verification
+
+Run:
 
 ```bash
 pnpm check
+pnpm infra:synth
 ```
 
-It currently runs 35 Vitest tests in seven files, ESLint, legacy script syntax checks, and a production Next.js build.
-
-For behavior changes, also validate the smallest relevant path:
-
-- Authentication: unauthenticated `/` redirects to `/signin`; OAuth uses the 8080 callback; logins outside the active mode's allowlist are rejected.
-- Report selection: changing the global project in Settings applies across the platform; changing launch name refreshes completed run choices and canonicalizes to the latest run; selecting an older run preserves its launch ID and displays a warning.
-- Live data: failures produce rows and metrics from the selected launch and configured ReportPortal filters only.
-- Empty data: a valid empty response shows `No data` and no error toast.
-- Error data: an API failure shows an error toast and no rows.
-- Source links: generated URLs use the configured owner, repository, and ref.
-- Cypress request validation: duplicate specs are deduplicated and all counts, paths, browsers, and timeouts remain within server and workflow bounds.
-- Cypress configuration: profile ownership is server-checked; the one-time Vault snapshot is consumed by the workflow; non-secret overrides remain within API and workflow bounds.
-- Completed-run details: the owner-scoped run record gates server-side GitHub job/artifact lookup and artifact redirects; the GitHub token is never exposed to the client.
-- Run tracking: `/api/runs` is authenticated and user-scoped; a valid signed webhook updates the matching row and causes one authenticated refresh on `/runs`.
-
-Existing Vitest coverage exercises analytics, Cypress run-request validation, and ordered pagination. New tests should prioritize full ReportPortal client contracts with mocked fetch responses, Auth.js authorization, the run API, webhook signature/filter behavior, Supabase repository failures, and browser states above.
-
-## Deployment
-
-Production deployment uses Vercel:
-
-1. Configure a production GitHub OAuth App with the deployed HTTPS origin and callback.
-2. Configure secrets and non-secret variables from `.env.example` in the Vercel project.
-3. Apply `supabase/migrations` to the linked Supabase project.
-4. Configure the repository's `workflow_run` webhook and `DASHBOARD_BASE_URL` variable. The workflow needs `id-token: write` for OIDC profile retrieval.
-5. Run `pnpm check`.
-6. Deploy with `pnpm dlx vercel@latest --prod`.
-7. Verify sign-in, authorization rejection, ReportPortal live/empty/error states, source links, dispatch, `/runs`, webhook updates, and artifact links.
-
-The current production alias is `https://rp-failure-intelligence.vercel.app`. Auth.js uses encrypted JWT sessions; Supabase stores metadata and Vault-encrypted user configuration. OpenNext configuration remains available for evaluation but is not the production path.
-
-### Container distribution
-
-The Dockerfile produces two deliberately separate runtime targets from the same standalone build. The production target is published as `latest`, Git tags, and `sha-…` tags and requires GitHub OAuth plus Supabase. The local target is published as `local`, `local-<Git tag>`, and `local-sha-…`; it has one implicit user and encrypted file-backed persistence. Production mode never automatically degrades to local mode.
-
-Compose pulls the local target, binds only to loopback, drops Linux capabilities, enables `no-new-privileges`, and mounts a named volume at `/data`. Its entrypoint creates a random secret on first boot. The application derives an AES-256-GCM key from it and atomically stores settings, credentials, Cypress profiles, snapshots, and run records in an encrypted envelope. The local target has no Supabase or OAuth dependency and must never be exposed directly to a network because it intentionally has no login boundary.
-
-The local target additionally installs Git, Chromium, Xvfb, and the Cypress Linux prerequisites. It clones or updates the configured test repository, installs from its frozen lockfile, and persists package/Cypress caches, CLI logs, and artifacts under `/data/runner`. Local mode never dispatches GitHub Actions and disables its OIDC-profile and webhook endpoints. The publishing workflow creates both targets for `linux/amd64` and `linux/arm64` with provenance and an SBOM. Vercel remains the supported production host.
-
-## Known Limitations and Next Work
-
-Current known limitations:
-
-- Report filter fields are configurable free-text inputs rather than server-discovered value selections.
-- Automated coverage does not yet include integration routes, authentication, webhooks, Supabase, or browser workflows.
-- The Runs page displays only the 20 most recent records per authenticated user and does not provide in-app artifact downloads.
-- The dashboard component contains several compact inline render blocks that may merit extraction as behavior grows.
-
-Recommended order of work:
-
-1. Optionally discover valid values for configured ReportPortal fields and offer selections where the API supports them.
-2. Add focused automated tests for authentication, ReportPortal contracts, run APIs, webhook filtering, and Supabase failures.
-3. Add browser coverage for analysis, dispatch, Realtime updates, and the Runs page.
-
-## Architecture Decision Checklist
-
-Before adding a feature, verify:
-
-- Does it preserve mandatory GitHub authorization?
-- Does it keep secrets server-side?
-- Is ReportPortal still the source of truth for failure analytics, with Supabase limited to run metadata?
-- Does it avoid writing to or executing code in the source repository?
-- Are empty and error outcomes represented honestly?
-- Is user input validated at the server boundary?
-- Does it require persistence, and if so, has that new system boundary been explicitly designed?
-- Is the behavior covered by a focused executable check?
+Tests should prioritize ReportPortal response contracts, owner isolation, encrypted repository round trips, snapshot single-consumption behavior, webhook filtering/signatures, DynamoDB stream retry behavior, and browser service-worker states. Never log decrypted integration/profile values, OAuth tokens, AWS role credentials, webhook secrets, or notification private keys.

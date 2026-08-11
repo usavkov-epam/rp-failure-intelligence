@@ -16,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { defaultCypressConfigFields, legacyReportFields } from "@/lib/configuration-mappings";
 import { dashboardSettingsFormValue } from "@/lib/dashboard-settings-form";
+import { HTTP_STATUS } from "@/lib/domain-constants";
 import type { CypressProfileInput, CypressProfileView, DashboardSettingsInput, DashboardSettingsView } from "@/lib/user-settings-schema";
 import AppHeader from "./AppHeader";
 
@@ -37,7 +38,7 @@ interface ReportDefaultsOptions { projects: string[]; launches: string[] }
 
 async function jsonRequest<T>(url: string, init: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...init.headers } });
-  const result = response.status === 204 ? {} : await response.json();
+  const result = response.status === HTTP_STATUS.NO_CONTENT ? {} : await response.json();
   if (!response.ok) throw new Error(result.error || "Request failed");
   return result as T;
 }
@@ -189,7 +190,7 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
           <TabsList className="mb-4"><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="configuration">Configuration & mappings</TabsTrigger><TabsTrigger value="profiles">Cypress profiles</TabsTrigger></TabsList>
 
           <TabsContent value="integrations">
-            <Card><CardHeader><CardTitle>Integrations</CardTitle><CardDescription>{localMode ? "Credentials are encrypted at rest in the persistent local Docker volume." : "Credentials are scoped to your account and encrypted in Supabase Vault."}</CardDescription></CardHeader><CardContent className="space-y-6">
+            <Card><CardHeader><CardTitle>Integrations</CardTitle><CardDescription>{localMode ? "Credentials are encrypted at rest in the persistent local Docker volume." : "Credentials are scoped to your account and encrypted before they are stored in DynamoDB."}</CardDescription></CardHeader><CardContent className="space-y-6">
               <section className="space-y-4"><div><h3 className="text-lg font-semibold">ReportPortal</h3></div>
                 <Field label="ReportPortal API URL"><Input value={dashboard.reportPortalApiUrl} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiUrl: event.target.value })} /></Field>
                 <StoredSecretField label="ReportPortal API key" configured={hasReportPortalKey} editing={changingReportPortalKey} value={dashboard.reportPortalApiKey || ""} onEditingChange={setChangingReportPortalKey} onChange={(reportPortalApiKey) => setDashboard({ ...dashboard, reportPortalApiKey })} />

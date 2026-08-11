@@ -5,13 +5,13 @@ export interface PageResult<T> {
 
 export async function collectAllPages<T>(
   loadPage: (pageNumber: number) => Promise<PageResult<T>>,
-  concurrency = 5,
+  concurrency: number = PAGINATION.DEFAULT_CONCURRENCY,
 ): Promise<PageResult<T>> {
-  const firstPage = await loadPage(1);
-  const totalPages = firstPage.page?.totalPages || 1;
+  const firstPage = await loadPage(PAGINATION.FIRST_PAGE);
+  const totalPages = firstPage.page?.totalPages || PAGINATION.FIRST_PAGE;
   const content = [...firstPage.content];
 
-  for (let pageNumber = 2; pageNumber <= totalPages; pageNumber += concurrency) {
+  for (let pageNumber = PAGINATION.FIRST_PAGE + 1; pageNumber <= totalPages; pageNumber += concurrency) {
     const pageNumbers = Array.from(
       { length: Math.min(concurrency, totalPages - pageNumber + 1) },
       (_, index) => pageNumber + index,
@@ -22,3 +22,4 @@ export async function collectAllPages<T>(
 
   return { ...firstPage, content };
 }
+import { PAGINATION } from "./domain-constants";
