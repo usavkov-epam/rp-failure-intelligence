@@ -46,6 +46,18 @@ function Field({ label, description, children }: { label: string; description?: 
   return <div className="space-y-1.5"><Label>{label}</Label>{children}{description && <p className="text-xs text-muted-foreground">{description}</p>}</div>;
 }
 
+function EnumOptionsField({ options, onChange }: { options: string[]; onChange: (options: string[]) => void }) {
+  const [draft, setDraft] = useState(() => options.join("\n"));
+
+  const commit = () => {
+    const normalized = draft.split("\n").map((value) => value.trim()).filter(Boolean);
+    setDraft(normalized.join("\n"));
+    onChange(normalized);
+  };
+
+  return <Field label="Options" description="One value per line."><Textarea rows={4} value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={commit} /></Field>;
+}
+
 function StoredSecretField({ label, configured, editing, value, optional, onEditingChange, onChange }: {
   label: string;
   configured: boolean;
@@ -211,18 +223,18 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
                   </div>
                   <div className="grid items-start gap-3 md:grid-cols-3">
                     <Field label="ReportPortal parameter"><Input value={field.reportPortalParameter} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, reportPortalParameter: event.target.value } : item) })} /></Field>
-                    {field.type === "enum" ? <Field label="Options" description="One value per line."><Textarea rows={4} value={field.options.join("\n")} onChange={(event) => { const options = event.target.value.split("\n").map((value) => value.trim()).filter(Boolean); setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, options, defaultValue: options.includes(item.defaultValue) ? item.defaultValue : "" } : item) }); }} /></Field> : <div />}
+                    {field.type === "enum" ? <EnumOptionsField options={field.options} onChange={(options) => setDashboard((current) => ({ ...current, reportFields: current.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, options, defaultValue: options.includes(item.defaultValue) ? item.defaultValue : "" } : item) }))} /> : <div />}
                     <Field label="Default value">{field.type === "enum" ? <Select value={field.defaultValue || "__none"} disabled={!field.options.length} onValueChange={(value) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, defaultValue: value === "__none" ? "" : value } : item) })}><SelectTrigger className="w-full"><SelectValue placeholder="No default" /></SelectTrigger><SelectContent><SelectItem value="__none">No default</SelectItem>{field.options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select> : <Input value={field.defaultValue} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, defaultValue: event.target.value } : item) })} />}</Field>
                   </div>
                 </CardContent></Card>)}
               </EditableSection>
               <EditableSection title="Advanced Cypress run fields" description="Allowlisted cypress.config.js values available in the Run dialog." addLabel="Add run field" onAdd={() => setDashboard({ ...dashboard, cypressConfigFields: [...dashboard.cypressConfigFields, { key: "", label: "", type: "string" }] })}>
-                {dashboard.cypressConfigFields.map((field, index) => <Card key={index} className="py-3"><CardContent className="grid items-end gap-3 md:grid-cols-[1fr_1.4fr_1fr_1fr_1fr_auto]">
+                {dashboard.cypressConfigFields.map((field, index) => <Card key={index} className="py-3"><CardContent className={`grid items-end gap-3 ${field.type === "number" ? "md:grid-cols-[1fr_1.4fr_1fr_1fr_1fr_auto]" : "md:grid-cols-[1fr_1.4fr_1fr_auto]"}`}>
                   <Field label="Cypress key"><Input value={field.key} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) })} /></Field>
                   <Field label="Label"><Input value={field.label} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} /></Field>
                   <Field label="Type"><Select value={field.type} onValueChange={(value: "string" | "number" | "boolean") => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, type: value, minimum: undefined, maximum: undefined } : item) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["string", "number", "boolean"].map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></Field>
-                  <Field label="Minimum"><Input type="number" disabled={field.type !== "number"} value={field.minimum ?? ""} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, minimum: event.target.value === "" ? undefined : Number(event.target.value) } : item) })} /></Field>
-                  <Field label="Maximum"><Input type="number" disabled={field.type !== "number"} value={field.maximum ?? ""} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, maximum: event.target.value === "" ? undefined : Number(event.target.value) } : item) })} /></Field>
+                  {field.type === "number" && <><Field label="Minimum"><Input type="number" value={field.minimum ?? ""} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, minimum: event.target.value === "" ? undefined : Number(event.target.value) } : item) })} /></Field>
+                  <Field label="Maximum"><Input type="number" value={field.maximum ?? ""} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, maximum: event.target.value === "" ? undefined : Number(event.target.value) } : item) })} /></Field></>}
                   <Button variant="ghost" size="icon" aria-label="Remove run field" onClick={() => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 /></Button>
                 </CardContent></Card>)}
               </EditableSection>

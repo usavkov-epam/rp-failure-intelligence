@@ -2,6 +2,7 @@ import "server-only";
 
 import { analyzeHistory, mergeCurrentFailuresWithHistory } from "./analytics";
 import { collectAllPages, type PageResult } from "./pagination";
+import { normalizeReportPortalProjectNames } from "./reportportal-projects";
 import type { DashboardData, HistoryEntry, ReportPortalItem, ReportSelection, ReportSourceOptions } from "./types";
 import type { ReportFieldMapping } from "./user-settings-schema";
 
@@ -15,10 +16,6 @@ interface Launch {
   startTime: number;
 }
 
-interface Project {
-  projectName: string;
-}
-
 export interface ReportPortalConnection {
   apiUrl: string;
   apiKey: string;
@@ -26,11 +23,18 @@ export interface ReportPortalConnection {
 }
 
 export async function loadReportPortalProjects(connection: ReportPortalConnection) {
-  const projectPage = await fetchAllReportPortalPages<Project>(connection, "project/list", {
+  try {
+    const payload = await fetchReportPortalJson<unknown>(connection, "project/names", {});
+    const projects = normalizeReportPortalProjectNames(payload);
+    if (projects.length) return projects;
+  } catch {
+    // ReportPortal versions before project/names used the paged project/list endpoint.
+  }
+
+  const projectPage = await fetchAllReportPortalPages<unknown>(connection, "project/list", {
     "page.size": 200,
-    "page.sort": "projectName,ASC",
   });
-  return [...new Set(projectPage.content.map(({ projectName }) => projectName).filter(Boolean))];
+  return normalizeReportPortalProjectNames(projectPage);
 }
 
 function selectedFields(selection: ReportSelection, fields: ReportFieldMapping[]) {
@@ -81,7 +85,7 @@ async function fetchAllPages<T>(connection: ReportPortalConnection, project: str
   return fetchAllReportPortalPages<T>(connection, `${project}/${endpoint}`, params);
 }
 
-async function fetchReportPortalPage<T>(connection: ReportPortalConnection, endpoint: string, params: Record<string, string | number>): Promise<Page<T>> {
+async function fetchReportPortalJson<T>(connection: ReportPortalConnection, endpoint: string, params: Record<string, string | number>): Promise<T> {
   const url = new URL(`${connection.apiUrl}/${endpoint}`);
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, String(value)));
   const response = await fetch(url, {
@@ -90,6 +94,10 @@ async function fetchReportPortalPage<T>(connection: ReportPortalConnection, endp
   });
   if (!response.ok) throw new Error(`ReportPortal ${endpoint} request failed with ${response.status}`);
   return response.json();
+}
+
+async function fetchReportPortalPage<T>(connection: ReportPortalConnection, endpoint: string, params: Record<string, string | number>): Promise<Page<T>> {
+  return fetchReportPortalJson<Page<T>>(connection, endpoint, params);
 }
 
 async function fetchAllReportPortalPages<T>(
