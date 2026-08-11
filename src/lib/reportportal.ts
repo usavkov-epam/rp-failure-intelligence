@@ -25,6 +25,14 @@ export interface ReportPortalConnection {
   testRailBaseUrl?: string;
 }
 
+export async function loadReportPortalProjects(connection: ReportPortalConnection) {
+  const projectPage = await fetchAllReportPortalPages<Project>(connection, "project/list", {
+    "page.size": 200,
+    "page.sort": "projectName,ASC",
+  });
+  return [...new Set(projectPage.content.map(({ projectName }) => projectName).filter(Boolean))];
+}
+
 function selectedFields(selection: ReportSelection, fields: ReportFieldMapping[]) {
   return fields.map(({ key, label }) => ({ key, label, value: selection.fields[key] || "" }));
 }
@@ -101,16 +109,12 @@ export async function resolveReportSelection(connection: ReportPortalConnection,
 }> {
   let projects = [selection.project];
   try {
-    const projectPage = await fetchAllReportPortalPages<Project>(connection, "project/list", {
-      "page.size": 200,
-      "page.sort": "projectName,ASC",
-    });
-    projects = [...new Set(projectPage.content.map(({ projectName }) => projectName).filter(Boolean))];
+    projects = await loadReportPortalProjects(connection);
   } catch {
     // Keep the requested project available when discovery is unavailable.
   }
 
-  const project = selection.project;
+  const project = projects.includes(selection.project) ? selection.project : projects[0] ?? selection.project;
   let launches = [selection.launchName];
   try {
     const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {

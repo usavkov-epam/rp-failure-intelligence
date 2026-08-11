@@ -20,11 +20,25 @@ export const reportFieldMappingSchema = z.object({
   key: identifier,
   label: z.string().trim().min(1).max(100),
   reportPortalParameter: z.string().trim().regex(/^filter\.(?:eq|cnt|in)\.[A-Za-z][A-Za-z0-9.]*$/),
+  type: z.enum(["text", "enum"]).default("text"),
+  options: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
   defaultValue: z.string().trim().max(200).default(""),
   required: z.boolean().default(false),
 }).strict().superRefine((field, context) => {
   if (reservedReportPortalParameters.has(field.reportPortalParameter.toLowerCase())) {
     context.addIssue({ code: "custom", path: ["reportPortalParameter"], message: "This ReportPortal parameter is controlled by the dashboard" });
+  }
+  if (field.type === "text" && field.options.length) {
+    context.addIssue({ code: "custom", path: ["options"], message: "Text fields cannot define options" });
+  }
+  if (field.type === "enum") {
+    if (!field.options.length) context.addIssue({ code: "custom", path: ["options"], message: "Enum fields require at least one option" });
+    if (new Set(field.options.map((option) => option.toLowerCase())).size !== field.options.length) {
+      context.addIssue({ code: "custom", path: ["options"], message: "Enum options must be unique" });
+    }
+    if (field.defaultValue && !field.options.includes(field.defaultValue)) {
+      context.addIssue({ code: "custom", path: ["defaultValue"], message: "Default value must be one of the enum options" });
+    }
   }
 });
 

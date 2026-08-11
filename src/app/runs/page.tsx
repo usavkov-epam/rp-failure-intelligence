@@ -1,7 +1,9 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getAuthorizedSession } from "@/auth";
 import RunsView from "@/components/RunsView";
+import { ACTIVE_PROJECT_COOKIE } from "@/lib/active-project";
 import { config } from "@/lib/config";
 import { getRunChannel, listCypressRuns } from "@/lib/cypress-run-store";
 import { getUserOwnerKey } from "@/lib/user-identity";
@@ -23,6 +25,6 @@ export default async function RunsPage() {
     supabaseUrl={url}
     supabaseAnonKey={anonKey}
     userName={session.user.name || session.user.githubLogin || "User"}
-    activeProject={dashboardSettings?.defaultProject}
+    activeProject={(await cookies()).get(ACTIVE_PROJECT_COOKIE)?.value || dashboardSettings?.defaultProject}
   />;
 }

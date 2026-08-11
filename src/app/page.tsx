@@ -1,8 +1,16 @@
+import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { CircleAlert, Settings } from "lucide-react";
 
 import { getAuthorizedSession } from "@/auth";
+import AppHeader from "@/components/AppHeader";
 import Dashboard from "@/components/Dashboard";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ACTIVE_PROJECT_COOKIE } from "@/lib/active-project";
 import { config } from "@/lib/config";
 import { resolveLaunchProfileId } from "@/lib/configuration-mappings";
 import { getDashboardData, resolveReportSelection } from "@/lib/reportportal";
@@ -27,19 +35,23 @@ export default async function Home({ searchParams }: PageProps<"/">) {
   if (!session) redirect("/signin");
   const ownerKey = getUserOwnerKey(session);
   const dashboard = await getDashboardConnection(ownerKey);
-  if (!dashboard) redirect("/settings?required=dashboard");
+  const userName = session.user.name || session.user.githubLogin || "User";
+  if (!dashboard?.settings.hasReportPortalApiKey) return <><AppHeader currentPage="analysis" userName={userName} /><main className="mx-auto max-w-3xl px-4 py-16"><Card><CardHeader><CardTitle>Connect ReportPortal to start</CardTitle><CardDescription>Analysis needs a user-specific ReportPortal API URL and key.</CardDescription></CardHeader><CardContent className="space-y-4"><Alert><CircleAlert /><AlertTitle>ReportPortal is not configured</AlertTitle><AlertDescription>Your credentials are saved securely for your account and are never exposed to the browser after saving.</AlertDescription></Alert><Button asChild><Link href="/settings"><Settings />Open integration settings</Link></Button></CardContent></Card></main></>;
   const parameters = await searchParams;
+  const activeProject = queryValue(parameters.project) || (await cookies()).get(ACTIVE_PROJECT_COOKIE)?.value || dashboard.settings.defaultProject;
   const sourceSelection = reportSelectionSchema.parse({
-    project: dashboard.settings.defaultProject,
+    project: activeProject,
     launchName: parameters.launchName || dashboard.settings.defaultLaunchName,
     launchId: parameters.launchId,
     historyDepth: parameters.historyDepth || dashboard.settings.defaultHistoryDepth,
   });
   const fields = Object.fromEntries(dashboard.settings.reportFields.map((field) => {
-    const requested = queryValue(parameters[`field.${field.key}`]);
+    const submitted = queryValue(parameters[`field.${field.key}`]);
+    const requested = submitted === "__any" ? undefined : submitted;
     const legacyTeam = field.reportPortalParameter === "filter.cnt.name" ? queryValue(parameters.team) : undefined;
     const value = (requested ?? legacyTeam ?? field.defaultValue).trim();
     if (value.length > 200 || (field.required && !value)) throw new Error(`Invalid value for ${field.label}`);
+    if (field.type === "enum" && value && !field.options.includes(value)) throw new Error(`Invalid value for ${field.label}`);
     return [field.key, value];
   }));
   const requestedSelection = { ...sourceSelection, fields };
@@ -53,6 +65,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     || selection.launchId !== requestedSelection.launchId
   ) {
     redirect(`/?${new URLSearchParams({
+      project: selection.project,
       launchName: selection.launchName,
       ...(selection.launchId === undefined ? {} : { launchId: String(selection.launchId) }),
       historyDepth: String(selection.historyDepth),
@@ -74,6 +87,6 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     reportFields={dashboard.settings.reportFields}
     cypressConfigFields={dashboard.settings.cypressConfigFields}
     suggestedProfileId={suggestedProfileId}
-    user={{ name: session.user.name || session.user.githubLogin || "User" }}
+    user={{ name: userName }}
   />;
 }

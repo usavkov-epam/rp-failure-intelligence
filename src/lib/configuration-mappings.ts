@@ -4,6 +4,8 @@ export const legacyReportFields: ReportFieldMapping[] = [{
   key: "cohort",
   label: "Test name contains",
   reportPortalParameter: "filter.cnt.name",
+  type: "text",
+  options: [],
   defaultValue: "",
   required: false,
 }];

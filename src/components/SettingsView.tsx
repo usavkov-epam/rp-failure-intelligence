@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, CircleAlert, Loader2, Pencil, Plus, Save, Trash2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { defaultCypressConfigFields, legacyReportFields } from "@/lib/configuration-mappings";
 import { dashboardSettingsFormValue } from "@/lib/dashboard-settings-form";
 import type { CypressProfileInput, CypressProfileView, DashboardSettingsInput, DashboardSettingsView } from "@/lib/user-settings-schema";
@@ -32,6 +33,7 @@ const emptyDashboard: DashboardSettingsInput = {
   launchProfileMappings: [],
 };
 const emptyProfile: CypressProfileInput = { name: "", baseUrl: "", variables: [], isDefault: false };
+interface ReportDefaultsOptions { projects: string[]; launches: string[] }
 
 async function jsonRequest<T>(url: string, init: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...init.headers } });
@@ -63,10 +65,11 @@ function EditableSection({ title, description, addLabel, onAdd, children }: { ti
   return <section className="space-y-3"><div><h3 className="text-lg font-semibold">{title}</h3><p className="text-sm text-muted-foreground">{description}</p></div>{children}<Button variant="outline" size="sm" onClick={onAdd}><Plus />{addLabel}</Button></section>;
 }
 
-export default function SettingsView({ initialDashboardSettings, initialCypressProfiles, userName }: {
+export default function SettingsView({ initialDashboardSettings, initialCypressProfiles, userName, activeProject }: {
   initialDashboardSettings: DashboardSettingsView | null;
   initialCypressProfiles: CypressProfileView[];
   userName: string;
+  activeProject?: string;
 }) {
   const [dashboard, setDashboard] = useState<DashboardSettingsInput>(() => dashboardSettingsFormValue(initialDashboardSettings, emptyDashboard));
   const [profiles, setProfiles] = useState(initialCypressProfiles);
@@ -80,6 +83,67 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
   const [hasTestRailKey, setHasTestRailKey] = useState(Boolean(initialDashboardSettings?.hasTestRailApiKey));
   const [changingReportPortalKey, setChangingReportPortalKey] = useState(!initialDashboardSettings?.hasReportPortalApiKey);
   const [changingTestRailKey, setChangingTestRailKey] = useState(!initialDashboardSettings?.hasTestRailApiKey);
+  const [reportOptions, setReportOptions] = useState<ReportDefaultsOptions>({ projects: [], launches: [] });
+  const [reportOptionsLoading, setReportOptionsLoading] = useState(false);
+  const [reportOptionsError, setReportOptionsError] = useState("");
+  const reportOptionsRequest = useRef<AbortController | null>(null);
+  const initialReportDefaults = useRef({
+    project: initialDashboardSettings?.defaultProject || emptyDashboard.defaultProject,
+    launchName: initialDashboardSettings?.defaultLaunchName || emptyDashboard.defaultLaunchName,
+  });
+
+  const loadReportDefaults = useCallback(async (preferredProject: string, preferredLaunch: string) => {
+    reportOptionsRequest.current?.abort();
+    const controller = new AbortController();
+    reportOptionsRequest.current = controller;
+    setReportOptionsLoading(true);
+    setReportOptionsError("");
+    try {
+      const projectsResult = await jsonRequest<{ projects: string[] }>("/api/report-source", { method: "GET", signal: controller.signal });
+      const project = projectsResult.projects.includes(preferredProject) ? preferredProject : projectsResult.projects[0] || "";
+      if (!project) throw new Error("No ReportPortal projects are available for this account");
+      const launchesResult = await jsonRequest<{ launches: string[] }>(`/api/report-source?project=${encodeURIComponent(project)}`, { method: "GET", signal: controller.signal });
+      const launchName = launchesResult.launches.includes(preferredLaunch) ? preferredLaunch : launchesResult.launches[0] || "";
+      setReportOptions({ projects: projectsResult.projects, launches: launchesResult.launches });
+      setDashboard((current) => ({ ...current, defaultProject: project, defaultLaunchName: launchName }));
+    } catch (reason) {
+      if (reason instanceof Error && reason.name === "AbortError") return;
+      setReportOptionsError(reason instanceof Error ? reason.message : "Unable to load ReportPortal projects");
+    } finally {
+      if (reportOptionsRequest.current === controller) {
+        reportOptionsRequest.current = null;
+        setReportOptionsLoading(false);
+      }
+    }
+  }, []);
+
+  const changeDefaultProject = async (project: string) => {
+    reportOptionsRequest.current?.abort();
+    const controller = new AbortController();
+    reportOptionsRequest.current = controller;
+    setDashboard((current) => ({ ...current, defaultProject: project, defaultLaunchName: "" }));
+    setReportOptions((current) => ({ ...current, launches: [] }));
+    setReportOptionsLoading(true);
+    setReportOptionsError("");
+    try {
+      const result = await jsonRequest<{ launches: string[] }>(`/api/report-source?project=${encodeURIComponent(project)}`, { method: "GET", signal: controller.signal });
+      setReportOptions((current) => ({ ...current, launches: result.launches }));
+      setDashboard((current) => ({ ...current, defaultLaunchName: result.launches[0] || "" }));
+    } catch (reason) {
+      if (reason instanceof Error && reason.name === "AbortError") return;
+      setReportOptionsError(reason instanceof Error ? reason.message : "Unable to load ReportPortal launches");
+    } finally {
+      if (reportOptionsRequest.current === controller) {
+        reportOptionsRequest.current = null;
+        setReportOptionsLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (hasReportPortalKey) void loadReportDefaults(initialReportDefaults.current.project, initialReportDefaults.current.launchName);
+    return () => reportOptionsRequest.current?.abort();
+  }, [hasReportPortalKey, loadReportDefaults]);
 
   const openProfile = (existing?: CypressProfileView) => {
     setEditingId(existing?.id || null);
@@ -95,6 +159,7 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
       setHasTestRailKey(result.settings.hasTestRailApiKey);
       setChangingReportPortalKey(!result.settings.hasReportPortalApiKey);
       setChangingTestRailKey(!result.settings.hasTestRailApiKey);
+      if (result.settings.hasReportPortalApiKey) void loadReportDefaults(result.settings.defaultProject, result.settings.defaultLaunchName);
       setMessage("Settings saved securely.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save settings"); }
     finally { setPending(false); }
@@ -102,7 +167,7 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
 
   return (
     <>
-      <AppHeader currentPage="settings" userName={userName} activeProject={dashboard.defaultProject} />
+      <AppHeader currentPage="settings" userName={userName} activeProject={hasReportPortalKey ? activeProject : undefined} />
       <main className="mx-auto max-w-6xl px-4 py-8 lg:px-6">
         <div className="mb-6"><h1 className="text-4xl font-semibold tracking-tight">Settings</h1><p className="mt-2 text-muted-foreground">Integrations, global ReportPortal context, configurable fields, and reusable Cypress profiles.</p></div>
         {error && <Alert variant="destructive" className="mb-4"><CircleAlert /><AlertTitle>Unable to save</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
@@ -126,20 +191,29 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
           </TabsContent>
 
           <TabsContent value="configuration">
-            <Card><CardHeader><CardTitle>Report source configuration</CardTitle><CardDescription>The active project is global. Launch, run, history, and configured ReportPortal fields remain selectable in Analysis.</CardDescription></CardHeader><CardContent className="space-y-8">
-              <div className="grid gap-4 md:grid-cols-[1fr_2fr_1fr]">
-                <Field label="Active ReportPortal project" description="Change rarely; applies across the platform."><Input value={dashboard.defaultProject} onChange={(event) => setDashboard({ ...dashboard, defaultProject: event.target.value })} /></Field>
-                <Field label="Default launch name"><Input value={dashboard.defaultLaunchName} onChange={(event) => setDashboard({ ...dashboard, defaultLaunchName: event.target.value })} /></Field>
-                <Field label="Default history depth"><Input type="number" min={1} max={30} value={dashboard.defaultHistoryDepth} onChange={(event) => setDashboard({ ...dashboard, defaultHistoryDepth: Number(event.target.value) })} /></Field>
-              </div>
-              <EditableSection title="ReportPortal custom fields" description="Every row becomes a filter in the Report Source block. Labels and ReportPortal parameters are entirely configurable." addLabel="Add report field" onAdd={() => setDashboard({ ...dashboard, reportFields: [...dashboard.reportFields, { key: "", label: "", reportPortalParameter: "filter.eq.", defaultValue: "", required: false }] })}>
-                {dashboard.reportFields.map((field, index) => <Card key={index} className="py-3"><CardContent className="grid items-end gap-3 md:grid-cols-[1fr_1.3fr_1.7fr_1.3fr_auto_auto]">
-                  <Field label="Key"><Input value={field.key} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) })} /></Field>
-                  <Field label="Label"><Input value={field.label} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} /></Field>
-                  <Field label="ReportPortal parameter"><Input value={field.reportPortalParameter} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, reportPortalParameter: event.target.value } : item) })} /></Field>
-                  <Field label="Default"><Input value={field.defaultValue} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, defaultValue: event.target.value } : item) })} /></Field>
-                  <label className="flex h-8 items-center gap-2 text-sm"><Checkbox checked={field.required} onCheckedChange={(checked) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, required: checked === true } : item) })} />Required</label>
-                  <Button variant="ghost" size="icon" aria-label="Remove report field" onClick={() => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 /></Button>
+            <Card><CardHeader><CardTitle>Report source configuration</CardTitle><CardDescription>Choose saved defaults from live ReportPortal data. The active project is switched from the application header.</CardDescription></CardHeader><CardContent className="space-y-8">
+              {!hasReportPortalKey ? <Alert><CircleAlert /><AlertTitle>ReportPortal integration required</AlertTitle><AlertDescription>Save a ReportPortal API URL and API key in Integrations before configuring project and launch defaults.</AlertDescription></Alert> : <>
+                {reportOptionsError && <Alert variant="destructive"><CircleAlert /><AlertTitle>Unable to load ReportPortal options</AlertTitle><AlertDescription className="flex items-center justify-between gap-3"><span>{reportOptionsError}</span><Button variant="outline" size="sm" onClick={() => void loadReportDefaults(dashboard.defaultProject, dashboard.defaultLaunchName)}>Retry</Button></AlertDescription></Alert>}
+                <div className="grid gap-4 md:grid-cols-[1fr_2fr_1fr]">
+                  <Field label="Default project" description="Used when no active project has been selected from the header."><Select value={dashboard.defaultProject} disabled={reportOptionsLoading || !reportOptions.projects.length} onValueChange={(project) => void changeDefaultProject(project)}><SelectTrigger className="w-full"><SelectValue placeholder={reportOptionsLoading ? "Loading projects..." : "Select project"} /></SelectTrigger><SelectContent>{reportOptions.projects.map((project) => <SelectItem key={project} value={project}>{project}</SelectItem>)}</SelectContent></Select></Field>
+                  <Field label="Default launch name"><Select value={dashboard.defaultLaunchName} disabled={reportOptionsLoading || !reportOptions.launches.length} onValueChange={(defaultLaunchName) => setDashboard({ ...dashboard, defaultLaunchName })}><SelectTrigger className="w-full"><SelectValue placeholder={reportOptionsLoading ? "Loading launches..." : "Select launch"} /></SelectTrigger><SelectContent>{reportOptions.launches.map((launchName) => <SelectItem key={launchName} value={launchName}>{launchName}</SelectItem>)}</SelectContent></Select></Field>
+                  <Field label="Default history depth"><Input type="number" min={1} max={30} value={dashboard.defaultHistoryDepth} onChange={(event) => setDashboard({ ...dashboard, defaultHistoryDepth: Number(event.target.value) })} /></Field>
+                </div>
+              </>}
+              <EditableSection title="ReportPortal custom fields" description="Every row becomes a typed filter in Report Source. Enum fields render as selections with your configured values." addLabel="Add report field" onAdd={() => setDashboard({ ...dashboard, reportFields: [...dashboard.reportFields, { key: "", label: "", reportPortalParameter: "filter.eq.", type: "text", options: [], defaultValue: "", required: false }] })}>
+                {dashboard.reportFields.map((field, index) => <Card key={index}><CardContent className="space-y-4">
+                  <div className="grid items-end gap-3 md:grid-cols-[1fr_1.4fr_1fr_auto_auto]">
+                    <Field label="Key"><Input value={field.key} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) })} /></Field>
+                    <Field label="Label"><Input value={field.label} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} /></Field>
+                    <Field label="Type"><Select value={field.type} onValueChange={(type: "text" | "enum") => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, type, options: type === "text" ? [] : item.options, defaultValue: type === "enum" && !item.options.includes(item.defaultValue) ? "" : item.defaultValue } : item) })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="text">Text</SelectItem><SelectItem value="enum">Enum selection</SelectItem></SelectContent></Select></Field>
+                    <label className="flex h-9 items-center gap-2 text-sm"><Checkbox checked={field.required} onCheckedChange={(checked) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, required: checked === true } : item) })} />Required</label>
+                    <Button variant="ghost" size="icon" aria-label="Remove report field" onClick={() => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 /></Button>
+                  </div>
+                  <div className="grid items-start gap-3 md:grid-cols-3">
+                    <Field label="ReportPortal parameter"><Input value={field.reportPortalParameter} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, reportPortalParameter: event.target.value } : item) })} /></Field>
+                    {field.type === "enum" ? <Field label="Options" description="One value per line."><Textarea rows={4} value={field.options.join("\n")} onChange={(event) => { const options = event.target.value.split("\n").map((value) => value.trim()).filter(Boolean); setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, options, defaultValue: options.includes(item.defaultValue) ? item.defaultValue : "" } : item) }); }} /></Field> : <div />}
+                    <Field label="Default value">{field.type === "enum" ? <Select value={field.defaultValue || "__none"} disabled={!field.options.length} onValueChange={(value) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, defaultValue: value === "__none" ? "" : value } : item) })}><SelectTrigger className="w-full"><SelectValue placeholder="No default" /></SelectTrigger><SelectContent><SelectItem value="__none">No default</SelectItem>{field.options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select> : <Input value={field.defaultValue} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, defaultValue: event.target.value } : item) })} />}</Field>
+                  </div>
                 </CardContent></Card>)}
               </EditableSection>
               <EditableSection title="Advanced Cypress run fields" description="Allowlisted cypress.config.js values available in the Run dialog." addLabel="Add run field" onAdd={() => setDashboard({ ...dashboard, cypressConfigFields: [...dashboard.cypressConfigFields, { key: "", label: "", type: "string" }] })}>

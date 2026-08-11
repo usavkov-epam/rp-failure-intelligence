@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { signOut } from "next-auth/react";
-import { BarChart3, CirclePlay, FolderKanban, LogOut, RefreshCw, Settings } from "lucide-react";
+import { BarChart3, CirclePlay, LogOut, RefreshCw, Settings } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import ModeToggle from "./ModeToggle";
+import ProjectSwitcher from "./ProjectSwitcher";
 
 const navigation = [
   { id: "analysis", href: "/", label: "Analysis", icon: BarChart3 },
@@ -15,11 +16,12 @@ const navigation = [
   { id: "settings", href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
-export default function AppHeader({ currentPage, userName, sourceStatus, activeProject }: {
+export default function AppHeader({ currentPage, userName, sourceStatus, activeProject, projectOptions }: {
   currentPage: "analysis" | "runs" | "settings";
   userName: string;
   sourceStatus?: "live" | "error";
   activeProject?: string;
+  projectOptions?: string[];
 }) {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -36,11 +38,7 @@ export default function AppHeader({ currentPage, userName, sourceStatus, activeP
               </Button>
             ))}
           </nav>
-          {activeProject && (
-            <Badge variant="outline" className="hidden gap-1.5 font-normal md:inline-flex" title="Active ReportPortal project">
-              <FolderKanban className="size-3.5" />{activeProject}
-            </Badge>
-          )}
+          {activeProject && <ProjectSwitcher activeProject={activeProject} initialProjects={projectOptions} />}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {sourceStatus && <Badge variant={sourceStatus === "live" ? "secondary" : "destructive"}>{sourceStatus === "live" ? "Live data" : "Load error"}</Badge>}

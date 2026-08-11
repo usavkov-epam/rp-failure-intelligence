@@ -38,6 +38,20 @@ describe("dashboardSettingsInputSchema", () => {
     }).success).toBe(false);
   });
 
+  it("accepts enum report fields with a valid default", () => {
+    expect(dashboardSettingsInputSchema.safeParse({
+      ...dashboard,
+      reportFields: [{ key: "team", label: "Team", reportPortalParameter: "filter.eq.attributes.team", type: "enum", options: ["Thunderjet", "Firebird"], defaultValue: "Thunderjet", required: false }],
+    }).success).toBe(true);
+  });
+
+  it("rejects enum report fields without unique options or with an invalid default", () => {
+    expect(dashboardSettingsInputSchema.safeParse({
+      ...dashboard,
+      reportFields: [{ key: "team", label: "Team", reportPortalParameter: "filter.eq.attributes.team", type: "enum", options: ["Thunderjet", "thunderjet"], defaultValue: "Other", required: false }],
+    }).success).toBe(false);
+  });
+
   it("rejects execution-sensitive Cypress config keys", () => {
     expect(dashboardSettingsInputSchema.safeParse({
       ...dashboard,

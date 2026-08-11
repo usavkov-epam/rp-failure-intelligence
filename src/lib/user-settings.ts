@@ -83,9 +83,14 @@ async function deleteSecret(id: string) {
 }
 
 function dashboardView(row: DashboardRow, secrets: DashboardSecrets): DashboardSettingsView {
-  const reportFields = secrets.reportFields || legacyReportFields.map((field) => ({
+  const storedReportFields = secrets.reportFields || legacyReportFields.map((field) => ({
     ...field,
     defaultValue: row.default_team,
+  }));
+  const reportFields = storedReportFields.map((field) => ({
+    ...field,
+    type: field.type || "text" as const,
+    options: field.options || [],
   }));
   return {
     configured: true,

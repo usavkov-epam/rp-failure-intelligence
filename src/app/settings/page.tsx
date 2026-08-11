@@ -1,7 +1,9 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { getAuthorizedSession } from "@/auth";
 import SettingsView from "@/components/SettingsView";
+import { ACTIVE_PROJECT_COOKIE } from "@/lib/active-project";
 import { getUserOwnerKey } from "@/lib/user-identity";
 import { getDashboardSettings, listCypressProfiles } from "@/lib/user-settings";
 
@@ -20,9 +22,11 @@ export default async function SettingsPage() {
     getDashboardSettings(ownerKey),
     listCypressProfiles(ownerKey),
   ]);
+  const activeProject = (await cookies()).get(ACTIVE_PROJECT_COOKIE)?.value || dashboardSettings?.defaultProject;
   return <SettingsView
     initialDashboardSettings={dashboardSettings}
     initialCypressProfiles={cypressProfiles}
     userName={session.user.name || session.user.githubLogin || "User"}
+    activeProject={activeProject}
   />;
 }
