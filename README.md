@@ -4,7 +4,7 @@ An organization-agnostic ReportPortal analytics dashboard that links failures to
 
 For architecture, use cases, security boundaries, code conventions, data flows, and contribution guidance, see [Engineering Guide](docs/ENGINEERING.md).
 
-The included `.env.example` demonstrates read-only source links to `folio-org/stripes-testing`. Organization names, source repositories, refs, and integration endpoints are runtime configuration rather than product policy. ReportPortal project, launch name, specific run, team, and history depth are selected in the web app.
+The included `.env.example` demonstrates read-only source links to `folio-org/stripes-testing`. Organization names, source repositories, refs, and integration endpoints are runtime configuration rather than product policy. ReportPortal project, launch name, specific run, configured report fields, and history depth are selected in the web app.
 
 ## Architecture
 
@@ -39,7 +39,7 @@ Run the app and open [http://localhost:8080](http://localhost:8080). The `pnpm d
 
 After the first sign-in, open **Settings** and configure your ReportPortal connection and dashboard defaults. Credentials are written to Supabase Vault through authenticated server routes and are never returned to the browser after saving. Valid responses without matching failures show `No data`. Live requests use `launch`, `item/v2`, and `item/history`.
 
-Use the **Report source** controls to choose the ReportPortal project, completed launch name, specific run, team, and history depth. The latest completed run is selected by default; choosing an older run displays a warning. Applying a selection stores its launch ID in the page URL, so the exact report can be bookmarked and shared without changing server environment variables.
+Use the **Report source** controls to choose the ReportPortal project, completed launch name, specific run, configured report filters, and history depth. Report fields are user-configurable mappings between a UI label and an allowed ReportPortal filter parameter such as `filter.eq.attributes.component` or `filter.cnt.name`; there is no built-in team concept. The latest completed run is selected by default; choosing an older run displays a warning. Applying a selection stores its launch ID and filter values in the page URL, so the exact report can be bookmarked and shared without changing server environment variables.
 
 Run all checks with `pnpm check`.
 
@@ -61,7 +61,7 @@ Both allowlists are comma-separated. The allowlist selected by the active mode m
 
 ## Cypress Runs
 
-Create one or more named Cypress profiles in **Settings**, then select failure rows and choose **Run selected**. A profile stores FOLIO `baseUrl`, Okapi/Kong URL, tenant, login/password, and supported ECS/Eureka options in Supabase Vault. Advanced options can override bounded, non-secret Cypress settings such as viewport, Cypress timeouts, retries, video, and failure screenshots.
+Create one or more named Cypress profiles in **Settings**, then select failure rows and choose **Run selected**. A profile stores a Cypress `baseUrl` and arbitrary typed environment variables in Supabase Vault; sensitive string variables are explicitly marked secret and never returned to the browser. Administrators can configure which non-secret `cypress.config.js` keys appear as advanced run overrides, including their labels, types, and numeric bounds. Ordered glob mappings (for example `*eureka*`) can preselect a profile from a launch name; the default profile remains the fallback.
 
 At dispatch, the server creates a one-hour, one-time Vault snapshot. The workflow retrieves it from `/api/workflow/cypress-profile` using a short-lived GitHub Actions OIDC identity token bound to the configured repository, workflow, branch, event, and GitHub-hosted runner. No reusable profile-delivery credential is stored. Secret values never enter workflow inputs, summaries, or artifacts, and runtime credentials are registered for log masking before Cypress starts. The workflow writes mode-`0600` `environments.js`, runs `cypress:repeat`, and removes credential files even when the test step fails. Supabase deletes a consumed snapshot atomically and purges expired unclaimed snapshots every 15 minutes.
 
@@ -103,7 +103,8 @@ OpenNext and Wrangler scripts remain in the repository for optional Cloudflare e
 - The only `NEXT_PUBLIC_*` integration values are Supabase's intentionally public URL and anon key; RLS grants the browser no table access.
 - Dashboard routes verify an authorized server session at the data boundary.
 - OAuth, user integration, GitHub Actions, webhook, and Supabase service-role credentials stay server-side.
-- Report project, launch, team, and history inputs are length/range validated before server-side API use.
+- Report project, launch, custom mapped fields, and history inputs are length/range validated before server-side API use.
+- Cypress override keys must be explicitly configured for the user and pass type/bounds validation at both the API and workflow boundaries; execution-sensitive keys such as `baseUrl`, `env`, spec paths, support files, and plugin hooks are blocked.
 - The source repository and ref are fixed by deployment configuration, not accepted from browser requests.
 - GitHub Actions dispatch accepts only authenticated, validated, bounded selected-spec requests; no source-repository mutation API is exposed.
 - Supabase stores run metadata plus user-owned configuration. API and test credentials are authenticated-encrypted in Vault; browser roles have no table or Vault access.

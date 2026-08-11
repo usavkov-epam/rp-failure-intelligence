@@ -3,6 +3,7 @@ import "server-only";
 import { analyzeHistory, mergeCurrentFailuresWithHistory } from "./analytics";
 import { collectAllPages, type PageResult } from "./pagination";
 import type { DashboardData, HistoryEntry, ReportPortalItem, ReportSelection, ReportSourceOptions } from "./types";
+import type { ReportFieldMapping } from "./user-settings-schema";
 
 type Page<T> = PageResult<T>;
 
@@ -24,7 +25,18 @@ export interface ReportPortalConnection {
   testRailBaseUrl?: string;
 }
 
-function errorData(selection: ReportSelection, error: string): DashboardData {
+function selectedFields(selection: ReportSelection, fields: ReportFieldMapping[]) {
+  return fields.map(({ key, label }) => ({ key, label, value: selection.fields[key] || "" }));
+}
+
+export function buildReportPortalFilters(selection: ReportSelection, fields: ReportFieldMapping[]) {
+  return Object.fromEntries(fields.flatMap(({ key, reportPortalParameter }) => {
+    const value = selection.fields[key]?.trim();
+    return value ? [[reportPortalParameter, value]] : [];
+  }));
+}
+
+function errorData(selection: ReportSelection, fields: ReportFieldMapping[], error: string): DashboardData {
   return {
     rows: [],
     trend: [],
@@ -48,7 +60,7 @@ function errorData(selection: ReportSelection, error: string): DashboardData {
       launchNumber: null,
       launchId: null,
       launchStatus: "UNAVAILABLE",
-      team: selection.team,
+      fields: selectedFields(selection, fields),
       historyDepth: selection.historyDepth,
       source: "error",
       loadedAt: new Date().toISOString(),
@@ -178,8 +190,8 @@ export async function loadReportSourceChildren(connection: ReportPortalConnectio
   return { launchName, launches, launchRuns };
 }
 
-async function loadLiveData(connection: ReportPortalConnection, selection: ReportSelection): Promise<DashboardData> {
-  const { project, launchName, launchId, team, historyDepth } = selection;
+async function loadLiveData(connection: ReportPortalConnection, selection: ReportSelection, fields: ReportFieldMapping[]): Promise<DashboardData> {
+  const { project, launchName, launchId, historyDepth } = selection;
   const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
     "filter.eq.name": launchName,
     "page.size": 200,
@@ -196,8 +208,8 @@ async function loadLiveData(connection: ReportPortalConnection, selection: Repor
     launchId: launch.id,
     providerType: "launch",
     "page.size": 1000,
-    "filter.cnt.name": team,
     "filter.eq.hasStats": "true",
+    ...buildReportPortalFilters(selection, fields),
   };
   const [suite, failed] = await Promise.all([
     fetchAllPages<ReportPortalItem>(connection, project, "item/v2", baseParams),
@@ -207,7 +219,7 @@ async function loadLiveData(connection: ReportPortalConnection, selection: Repor
     ? await fetchAllPages<HistoryEntry>(connection, project, "item/history", {
       "filter.eq.launchId": launch.id,
       "filter.in.status": "FAILED",
-      "filter.cnt.name": team,
+      ...buildReportPortalFilters(selection, fields),
       historyDepth,
       type: "line",
       "page.size": 1000,
@@ -224,7 +236,7 @@ async function loadLiveData(connection: ReportPortalConnection, selection: Repor
       launchNumber: launch.number,
       launchId: launch.id,
       launchStatus: launch.status,
-      team,
+      fields: selectedFields(selection, fields),
       historyDepth,
       source: "live",
       loadedAt: new Date().toISOString(),
@@ -232,10 +244,10 @@ async function loadLiveData(connection: ReportPortalConnection, selection: Repor
   };
 }
 
-export async function getDashboardData(connection: ReportPortalConnection, selection: ReportSelection): Promise<DashboardData> {
+export async function getDashboardData(connection: ReportPortalConnection, selection: ReportSelection, fields: ReportFieldMapping[]): Promise<DashboardData> {
   try {
-    return await loadLiveData(connection, selection);
+    return await loadLiveData(connection, selection, fields);
   } catch (error) {
-    return errorData(selection, error instanceof Error ? error.message : "Unable to load live ReportPortal data");
+    return errorData(selection, fields, error instanceof Error ? error.message : "Unable to load live ReportPortal data");
   }
 }

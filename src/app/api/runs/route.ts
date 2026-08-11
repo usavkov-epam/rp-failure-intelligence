@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 
 import { getAuthorizedSession } from "@/auth";
 import { cypressRunRequestSchema } from "@/lib/cypress-run-request";
+import { validateCypressConfigValues } from "@/lib/configuration-mappings";
 import { dispatchCypressRun } from "@/lib/cypress-runs";
 import { createCypressRun, failCypressRunDispatch, getRunChannel, listCypressRuns } from "@/lib/cypress-run-store";
 import { getRequestedBy, getUserOwnerKey } from "@/lib/user-identity";
-import { createRunProfileSnapshot, getCypressProfileSecret } from "@/lib/user-settings";
+import { createRunProfileSnapshot, getCypressProfileSecret, getDashboardSettings } from "@/lib/user-settings";
 
 export async function GET() {
   const session = await getAuthorizedSession();
@@ -39,8 +40,14 @@ export async function POST(request: Request) {
   const { owner, repository, workflow } = configuration.githubActions;
   const actionsUrl = `https://github.com/${owner}/${repository}/actions/workflows/${workflow}`;
   try {
-    const selectedProfile = await getCypressProfileSecret(ownerKey, parsed.data.profileId);
+    const [selectedProfile, dashboardSettings] = await Promise.all([
+      getCypressProfileSecret(ownerKey, parsed.data.profileId),
+      getDashboardSettings(ownerKey),
+    ]);
     if (!selectedProfile) return NextResponse.json({ error: "Cypress profile was not found" }, { status: 404 });
+    if (!dashboardSettings || !validateCypressConfigValues(parsed.data.cypressConfig, dashboardSettings.cypressConfigFields)) {
+      return NextResponse.json({ error: "Cypress configuration contains an unknown or invalid value" }, { status: 400 });
+    }
     const run = await createCypressRun(requestId, ownerKey, requestedBy, parsed.data, actionsUrl, {
       id: selectedProfile.profile.id,
       name: selectedProfile.profile.name,

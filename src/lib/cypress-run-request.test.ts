@@ -47,9 +47,8 @@ describe("cypressRunRequestSchema", () => {
     { browser: "firefox" },
     { timeoutSeconds: 59 },
     { profileId: "../../secret" },
-    { cypressConfig: { viewportWidth: 200 } },
-    { cypressConfig: { retries: 6 } },
-    { cypressConfig: { baseUrl: "https://unapproved.example.org" } },
+    { cypressConfig: { "invalid-key": true } },
+    { cypressConfig: { customValue: "line 1\nline 2" } },
   ])("rejects unsafe or unbounded input: %o", (override) => {
     expect(cypressRunRequestSchema.safeParse({ ...validRequest, ...override }).success).toBe(false);
   });

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Failure Intelligence is an authenticated, read-only analytics application for investigating failed automated tests stored in ReportPortal. It helps an authorized user select a ReportPortal project, launch name, specific completed run, team, and history depth; inspect failure patterns; and open the corresponding Cypress source, ReportPortal log, or TestRail case.
+Failure Intelligence is an authenticated, read-only analytics application for investigating failed automated tests stored in ReportPortal. It helps an authorized user select a ReportPortal project, launch name, specific completed run, configured report fields, and history depth; inspect failure patterns; and open the corresponding Cypress source, ReportPortal log, or TestRail case.
 
 ReportPortal is the source of truth for failure data and analytics. Supabase persists Cypress workflow metadata and user-owned configuration; secret values use Supabase Vault authenticated encryption. The application contains no bundled report or fallback test data.
 
@@ -35,13 +35,13 @@ The application does not:
 2. Select an accessible ReportPortal project.
 3. Select a completed launch name.
 4. Keep the latest completed run selected or choose a historical run. Historical selections display a warning.
-5. Enter the team filter and choose a history depth.
+5. Enter any configured ReportPortal filter fields and choose a history depth.
 6. Review current failures, historical failure rate, streaks, transitions, and risk categories.
 7. Open the source spec, ReportPortal log, or TestRail case.
 
 ### Share a report selection
 
-The project, launch name, launch ID, team, and history depth are encoded as validated URL query parameters. An authorized colleague can open the URL and reproduce the exact run selection. Authentication is still required.
+The project, launch name, launch ID, mapped filter values, and history depth are encoded as validated URL query parameters. An authorized colleague can open the URL and reproduce the exact run selection. Authentication is still required.
 
 ### Handle an empty result
 
@@ -49,7 +49,7 @@ A valid ReportPortal response with no matching tests or failures is not an error
 
 ### Handle an integration failure
 
-A ReportPortal transport or API failure produces no report rows. The UI displays an error toast and marks the source as a load error. It never substitutes another project, team, or launch.
+A ReportPortal transport or API failure produces no report rows. The UI displays an error toast and marks the source as a load error. It never substitutes another project, configured filter, or launch.
 
 ## System Architecture
 
@@ -81,7 +81,7 @@ flowchart LR
 | `src/lib/cypress-run-store.ts` | Persistence boundary | Service-role run storage, user-scoped listing, updates, HMAC channel names, and Broadcast publishing |
 | `src/lib/cypress-run-request.ts` | Validation boundary | Selected spec paths and bounded runner settings |
 | `src/lib/user-settings.ts` | Secret/configuration boundary | Owner-scoped metadata, Supabase Vault operations, profiles, and one-time run snapshots |
-| `src/lib/user-settings-schema.ts` | Validation boundary | HTTPS-only integration settings and supported Cypress profile fields |
+| `src/lib/user-settings-schema.ts` | Validation boundary | HTTPS-only integrations, configurable ReportPortal/Cypress fields, launch mappings, and generic Cypress profile variables |
 | `src/lib/analytics.ts` | Domain logic | Convert ReportPortal history into rows, trends, metrics, and risk categories |
 | `src/lib/types.ts` | Internal contracts | Dashboard DTOs, ReportPortal response shapes, report selection types |
 | `src/components/Dashboard.tsx` | Client UI | Selectors, filters, DataGrid, links, metrics, empty states, and error toasts |
@@ -189,7 +189,7 @@ A report selection contains:
 - `project`: ReportPortal project name.
 - `launchName`: exact completed launch name.
 - `launchId`: exact completed run ID. When omitted or invalid for the launch name, the latest completed run is selected and the URL is canonicalized.
-- `team`: substring used to filter ReportPortal item names.
+- `field.<key>`: a value mapped by user settings to an allowed ReportPortal `filter.eq.*`, `filter.cnt.*`, or `filter.in.*` parameter.
 - `historyDepth`: number of historical launches, constrained to 1 through 30 by the ReportPortal API.
 
 Projects, launch names, and completed runs are discovered server-side. Changing project or launch name defaults to its latest completed run. Selecting an older run preserves its ID in the URL and displays a warning that the analysis is historical.
@@ -271,7 +271,8 @@ The three Supabase values are optional only as a group: if any one is present, c
 - Browser roles receive no policies or grants for settings, profiles, run snapshots, or Vault. All access passes through authenticated Next.js routes using the service role and an explicit owner filter.
 - Supabase Vault encrypts secret JSON with authenticated encryption and keeps its project root key separate from database data and backups.
 - GET responses return editable non-secret fields and `has...` flags only. Stored API keys and passwords are never returned.
-- User-provided ReportPortal, TestRail, FOLIO, Okapi/Kong, and Edge endpoints must use HTTPS.
+- User-provided ReportPortal, TestRail, and Cypress base endpoints must use HTTPS.
+- ReportPortal fields, permitted Cypress config overrides, and launch-to-profile mappings are stored in the existing encrypted settings Vault payload. This model is backward-compatible with the legacy name filter and requires no database migration.
 - A Cypress dispatch copies the selected profile into a one-hour Vault secret. An atomic SQL consume operation returns the snapshot once while deleting its row and Vault value in the same transaction. Supabase Cron purges expired unclaimed snapshots and Vault values every 15 minutes.
 - The workflow presents a short-lived GitHub Actions OIDC token. The server verifies its signature, issuer, audience, repository, owner, workflow ref, branch, dispatch event, and GitHub-hosted runner before releasing a snapshot. No reusable profile-delivery secret is stored.
 - User-owned Vault settings are the only supported ReportPortal, TestRail, and Cypress configuration source; no shared GitHub/Vercel profile credential is used.
@@ -372,7 +373,7 @@ For behavior changes, also validate the smallest relevant path:
 
 - Authentication: unauthenticated `/` redirects to `/signin`; OAuth uses the 8080 callback; logins outside the active mode's allowlist are rejected.
 - Report selection: changing project or launch name refreshes completed run choices and canonicalizes to the latest run; selecting an older run preserves its launch ID and displays a warning.
-- Live data: failures produce rows and metrics from the selected launch/team only.
+- Live data: failures produce rows and metrics from the selected launch and configured ReportPortal filters only.
 - Empty data: a valid empty response shows `No data` and no error toast.
 - Error data: an API failure shows an error toast and no rows.
 - Source links: generated URLs use the configured owner, repository, and ref.
@@ -400,14 +401,14 @@ The current production alias is `https://rp-failure-intelligence.vercel.app`. Au
 
 Current known limitations:
 
-- Team is currently free text rather than a server-discovered selection.
+- Report filter fields are configurable free-text inputs rather than server-discovered value selections.
 - Automated coverage does not yet include integration routes, authentication, webhooks, Supabase, or browser workflows.
 - The Runs page displays only the 20 most recent records per authenticated user and does not provide in-app artifact downloads.
 - The dashboard component contains several compact inline render blocks that may merit extraction as behavior grows.
 
 Recommended order of work:
 
-1. Discover valid teams for the selected launch and replace the team text field with a selection.
+1. Optionally discover valid values for configured ReportPortal fields and offer selections where the API supports them.
 2. Add focused automated tests for authentication, ReportPortal contracts, run APIs, webhook filtering, and Supabase failures.
 3. Add browser coverage for analysis, dispatch, Realtime updates, and the Runs page.
 

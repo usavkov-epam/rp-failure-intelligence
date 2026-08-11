@@ -38,6 +38,7 @@ import ExpandMoreRounded from "@mui/icons-material/ExpandMoreRounded";
 import { DataGrid, type GridColDef, type GridRowSelectionModel } from "@mui/x-data-grid";
 import type { CypressConfigOverrides } from "@/lib/cypress-run-request";
 import type { DashboardData, FailureRow, ReportSelection, ReportSourceOptions, Risk } from "@/lib/types";
+import type { CypressConfigField, ReportFieldMapping } from "@/lib/user-settings-schema";
 import AppHeader from "./AppHeader";
 import { appTheme } from "./app-theme";
 
@@ -63,28 +64,6 @@ interface CypressRunFormOptions {
   profileId: string;
   cypressConfig: CypressConfigOverrides;
 }
-
-const cypressNumberOptions: Array<{
-  key: keyof Pick<CypressConfigOverrides,
-    | "viewportWidth"
-    | "viewportHeight"
-    | "defaultCommandTimeout"
-    | "pageLoadTimeout"
-    | "requestTimeout"
-    | "responseTimeout"
-    | "retries">;
-  label: string;
-  min: number;
-  max: number;
-}> = [
-  { key: "viewportWidth", label: "Viewport width (px)", min: 320, max: 3_840 },
-  { key: "viewportHeight", label: "Viewport height (px)", min: 320, max: 2_160 },
-  { key: "defaultCommandTimeout", label: "Command timeout (ms)", min: 1_000, max: 300_000 },
-  { key: "pageLoadTimeout", label: "Page-load timeout (ms)", min: 1_000, max: 300_000 },
-  { key: "requestTimeout", label: "Request timeout (ms)", min: 1_000, max: 300_000 },
-  { key: "responseTimeout", label: "Response timeout (ms)", min: 1_000, max: 300_000 },
-  { key: "retries", label: "Cypress retries", min: 0, max: 5 },
-];
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
@@ -191,12 +170,15 @@ function Distribution({ data }: { data: DashboardData }) {
   );
 }
 
-export default function Dashboard({ initialData, reportSelection, reportSourceOptions, sourceRepository, cypressProfiles, user }: {
+export default function Dashboard({ initialData, reportSelection, reportSourceOptions, sourceRepository, cypressProfiles, reportFields, cypressConfigFields, suggestedProfileId, user }: {
   initialData: DashboardData;
   reportSelection: ReportSelection;
   reportSourceOptions: ReportSourceOptions;
   sourceRepository: { owner: string; repository: string; ref: string };
   cypressProfiles: ReadonlyArray<{ id: string; name: string; isDefault: boolean }>;
+  reportFields: ReportFieldMapping[];
+  cypressConfigFields: CypressConfigField[];
+  suggestedProfileId: string;
   user: { name: string };
 }) {
   const [search, setSearch] = useState("");
@@ -213,7 +195,7 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
     threads: 1,
     browser: "chrome",
     timeoutSeconds: 600,
-    profileId: cypressProfiles.find(({ isDefault }) => isDefault)?.id || cypressProfiles[0]?.id || "",
+    profileId: suggestedProfileId,
     cypressConfig: {},
   });
   const [draftSource, setDraftSource] = useState(reportSelection);
@@ -310,10 +292,7 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
     }
   };
 
-  const setCypressConfig = <Key extends keyof CypressConfigOverrides>(
-    key: Key,
-    value: CypressConfigOverrides[Key],
-  ) => {
+  const setCypressConfig = (key: string, value: string | number | boolean | undefined) => {
     setRunOptions((current) => {
       const cypressConfig = { ...current.cypressConfig };
       if (value === undefined) delete cypressConfig[key];
@@ -355,15 +334,21 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
       <Box component="main" sx={{ pb: 7 }}>
         <Box sx={{ borderBottom: 1, borderColor: "divider", background: "linear-gradient(115deg, #eef4f0 0%, #f3f1eb 55%, #f5e7df 100%)" }}>
           <Container maxWidth={false} sx={{ py: { xs: 3, md: 5 } }}>
-            <Typography variant="overline" color="secondary" sx={{ fontWeight: 800 }}>{initialData.meta.team} · {initialData.meta.project}</Typography>
+            <Typography variant="overline" color="secondary" sx={{ fontWeight: 800 }}>{initialData.meta.project}</Typography>
             <Typography variant="h1" sx={{ mt: 0.5, fontSize: { xs: 34, md: 52 }, overflowWrap: "anywhere" }}>{initialData.meta.launchName}</Typography>
-            <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1, mt: 2 }}>{initialData.meta.launchNumber !== null && <Chip label={`Launch #${initialData.meta.launchNumber}`} />}{initialData.meta.launchId !== null && <Chip label={`ID ${initialData.meta.launchId}`} />}<Chip color="error" variant="outlined" label={initialData.meta.launchStatus} /><Chip variant="outlined" label={`${initialData.meta.historyDepth}-run history`} /></Stack>
+            <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1, mt: 2 }}>
+              {initialData.meta.launchNumber !== null && <Chip label={`Launch #${initialData.meta.launchNumber}`} />}
+              {initialData.meta.launchId !== null && <Chip label={`ID ${initialData.meta.launchId}`} />}
+              <Chip color="error" variant="outlined" label={initialData.meta.launchStatus} />
+              <Chip variant="outlined" label={`${initialData.meta.historyDepth}-run history`} />
+              {initialData.meta.fields.filter(({ value }) => value).map(({ key, label, value }) => <Chip key={key} variant="outlined" label={`${label}: ${value}`} />)}
+            </Stack>
           </Container>
         </Box>
         <Container maxWidth={false} sx={{ mt: 3 }}>
           <Paper ref={reportFormRef} component="form" action="/" method="get" variant="outlined" sx={{ p: 2, mb: 2 }}>
             <Typography variant="h6" sx={{ mb: 1.5 }}>Report source</Typography>
-            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 2fr 180px 1fr 160px auto" }, gap: 1.25, alignItems: "center" }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(auto-fit, minmax(180px, 1fr))" }, gap: 1.25, alignItems: "center" }}>
               <FormControl size="small" required>
                 <InputLabel>Project</InputLabel>
                 <Select
@@ -415,7 +400,16 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
                 </FormControl>
                 {sourceLoading && <CircularProgress aria-label="Loading runs" size={18} sx={{ position: "absolute", right: 36, top: 11 }} />}
               </Box>
-              <TextField name="team" label="Team" size="small" defaultValue={reportSelection.team} required />
+              {reportFields.map((field) => (
+                <TextField
+                  key={field.key}
+                  name={`field.${field.key}`}
+                  label={field.label}
+                  size="small"
+                  defaultValue={reportSelection.fields[field.key] || ""}
+                  required={field.required}
+                />
+              ))}
               <FormControl size="small">
                 <InputLabel>History depth</InputLabel>
                 <Select name="historyDepth" label="History depth" defaultValue={reportSelection.historyDepth}>
@@ -441,7 +435,7 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
             </Alert>
           )}
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(4, 1fr)" }, gap: 1.5 }}>
-            <Metric label="Current suite failure rate" value={`${initialData.metrics.suiteFailureRate.toFixed(1)}%`} detail={`${initialData.metrics.suiteFailed} failed of ${initialData.metrics.suiteTotal} team tests`} />
+            <Metric label="Current suite failure rate" value={`${initialData.metrics.suiteFailureRate.toFixed(1)}%`} detail={`${initialData.metrics.suiteFailed} failed of ${initialData.metrics.suiteTotal} filtered tests`} />
             <Metric label="Failed test identities" value={String(initialData.rows.length)} detail={`${new Set(initialData.rows.map((row) => row.specPath)).size} unique Cypress specs`} />
             <Metric label="Historical cohort failures" value={`${initialData.metrics.cohortExecutions ? Math.round((initialData.metrics.cohortFailures / initialData.metrics.cohortExecutions) * 100) : 0}%`} detail={`${initialData.metrics.cohortFailures} of ${initialData.metrics.cohortExecutions} observations`} />
             <Metric label="Immediate regressions" value={String(initialData.metrics.regressions)} detail="Current failures preceded by a passed run" />
@@ -525,27 +519,14 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
               </AccordionSummary>
               <AccordionDetails>
                 <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
-                  {cypressNumberOptions.map(({ key, label, min, max }) => (
-                    <TextField
-                      key={key}
-                      label={label}
-                      type="number"
-                      value={runOptions.cypressConfig[key] ?? ""}
-                      slotProps={{ htmlInput: { min, max } }}
-                      onChange={(event) => setCypressConfig(
-                        key,
-                        event.target.value === "" ? undefined : Number(event.target.value),
-                      )}
-                    />
-                  ))}
-                  {(["video", "screenshotOnRunFailure"] as const).map((key) => (
-                    <FormControl key={key}>
-                      <InputLabel>{key === "video" ? "Record video" : "Screenshot on failure"}</InputLabel>
+                  {cypressConfigFields.map((field) => field.type === "boolean" ? (
+                    <FormControl key={field.key}>
+                      <InputLabel>{field.label}</InputLabel>
                       <Select
-                        label={key === "video" ? "Record video" : "Screenshot on failure"}
-                        value={runOptions.cypressConfig[key] === undefined ? "" : String(runOptions.cypressConfig[key])}
+                        label={field.label}
+                        value={runOptions.cypressConfig[field.key] === undefined ? "" : String(runOptions.cypressConfig[field.key])}
                         onChange={(event) => setCypressConfig(
-                          key,
+                          field.key,
                           event.target.value === "" ? undefined : event.target.value === "true",
                         )}
                       >
@@ -554,7 +535,20 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
                         <MenuItem value="false">Disabled</MenuItem>
                       </Select>
                     </FormControl>
+                  ) : (
+                    <TextField
+                      key={field.key}
+                      label={field.label}
+                      type={field.type === "number" ? "number" : "text"}
+                      value={runOptions.cypressConfig[field.key] ?? ""}
+                      slotProps={{ htmlInput: { min: field.minimum, max: field.maximum } }}
+                      onChange={(event) => setCypressConfig(
+                        field.key,
+                        event.target.value === "" ? undefined : field.type === "number" ? Number(event.target.value) : event.target.value,
+                      )}
+                    />
                   ))}
+                  {!cypressConfigFields.length && <Typography color="text.secondary">No run override fields are configured.</Typography>}
                 </Box>
               </AccordionDetails>
             </Accordion>

@@ -3,6 +3,7 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
 import { config } from "./config";
+import { defaultCypressConfigFields, legacyReportFields } from "./configuration-mappings";
 import type {
   CypressProfileInput,
   CypressProfileSecret,
@@ -35,10 +36,14 @@ interface DashboardSecrets {
   reportPortalApiKey: string;
   testRailApiUser?: string;
   testRailApiKey?: string;
+  reportFields?: DashboardSettingsInput["reportFields"];
+  cypressConfigFields?: DashboardSettingsInput["cypressConfigFields"];
+  launchProfileMappings?: DashboardSettingsInput["launchProfileMappings"];
 }
 
-interface StoredCypressProfile extends CypressProfileSecret {
-  password: string;
+interface StoredCypressProfile extends Omit<CypressProfileSecret, "secretKeys"> {
+  secretKeys?: string[];
+  password?: string;
   edgeApiKey?: string;
 }
 
@@ -78,6 +83,10 @@ async function deleteSecret(id: string) {
 }
 
 function dashboardView(row: DashboardRow, secrets: DashboardSecrets): DashboardSettingsView {
+  const reportFields = secrets.reportFields || legacyReportFields.map((field) => ({
+    ...field,
+    defaultValue: row.default_team,
+  }));
   return {
     configured: true,
     reportPortalApiUrl: row.reportportal_api_url,
@@ -85,8 +94,10 @@ function dashboardView(row: DashboardRow, secrets: DashboardSecrets): DashboardS
     testRailApiUser: secrets.testRailApiUser || "",
     defaultProject: row.default_project,
     defaultLaunchName: row.default_launch_name,
-    defaultTeam: row.default_team,
     defaultHistoryDepth: row.default_history_depth,
+    reportFields,
+    cypressConfigFields: secrets.cypressConfigFields || defaultCypressConfigFields,
+    launchProfileMappings: secrets.launchProfileMappings || [],
     hasReportPortalApiKey: Boolean(secrets.reportPortalApiKey),
     hasTestRailApiKey: Boolean(secrets.testRailApiKey),
   };
@@ -124,6 +135,9 @@ export async function saveDashboardSettings(ownerKey: string, input: DashboardSe
     reportPortalApiKey: input.reportPortalApiKey || previous?.reportPortalApiKey || "",
     testRailApiUser: input.testRailApiUser || previous?.testRailApiUser,
     testRailApiKey: input.testRailApiKey || previous?.testRailApiKey,
+    reportFields: input.reportFields,
+    cypressConfigFields: input.cypressConfigFields,
+    launchProfileMappings: input.launchProfileMappings,
   };
   if (!secrets.reportPortalApiKey) throw new Error("ReportPortal API key is required");
 
@@ -135,7 +149,7 @@ export async function saveDashboardSettings(ownerKey: string, input: DashboardSe
     testrail_base_url: input.testRailBaseUrl?.replace(/\/$/, "") || null,
     default_project: input.defaultProject,
     default_launch_name: input.defaultLaunchName,
-    default_team: input.defaultTeam,
+    default_team: input.reportFields[0]?.defaultValue || "",
     default_history_depth: input.defaultHistoryDepth,
     secret_id: secretId,
     updated_at: new Date().toISOString(),
@@ -147,43 +161,57 @@ export async function saveDashboardSettings(ownerKey: string, input: DashboardSe
   return getDashboardSettings(ownerKey);
 }
 
+function storedSecretKeys(stored: StoredCypressProfile) {
+  if (stored.secretKeys) return stored.secretKeys;
+  return ["diku_password", "EDGE_API_KEY"].filter((key) => stored.env[key] !== undefined);
+}
+
+function parseVariableValue(type: "string" | "number" | "boolean", value: string) {
+  if (type === "string") return value;
+  if (type === "boolean") {
+    if (value !== "true" && value !== "false") throw new Error("Boolean environment values must be true or false");
+    return value === "true";
+  }
+  if (!value.trim()) throw new Error("Number environment values cannot be blank");
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error("Number environment values must be finite numbers");
+  return parsed;
+}
+
 function toStoredProfile(input: CypressProfileInput, previous?: StoredCypressProfile): StoredCypressProfile {
-  const password = input.password || previous?.password || "";
-  if (!password) throw new Error("Cypress profile password is required");
-  const env: Record<string, string | boolean> = {
-    OKAPI_HOST: input.okapiHost,
-    OKAPI_TENANT: input.tenant,
-    diku_login: input.login,
-    diku_password: password,
-    rtrAuth: input.rtrAuth,
-    ecsEnabled: input.ecsEnabled,
-    eureka: input.eureka,
-  };
-  if (input.edgeHost) env.EDGE_HOST = input.edgeHost;
-  const edgeApiKey = input.edgeApiKey || previous?.edgeApiKey;
-  if (edgeApiKey) env.EDGE_API_KEY = edgeApiKey;
-  if (input.systemRoleName) env.systemRoleName = input.systemRoleName;
-  if (input.ecsEnvironment) env.ecs_env_name = input.ecsEnvironment;
-  return { baseUrl: input.baseUrl, env, password, edgeApiKey };
+  const previousSecrets = new Set(previous ? storedSecretKeys(previous) : []);
+  const env: Record<string, string | number | boolean> = {};
+  const secretKeys: string[] = [];
+  for (const variable of input.variables) {
+    const submitted = variable.value || "";
+    if (variable.secret) {
+      secretKeys.push(variable.key);
+      if (!submitted) {
+        const previousValue = previousSecrets.has(variable.key) ? previous?.env[variable.key] : undefined;
+        if (previousValue === undefined) throw new Error(`Secret environment variable ${variable.key} requires a value`);
+        env[variable.key] = previousValue;
+        continue;
+      }
+    }
+    env[variable.key] = parseVariableValue(variable.type, submitted);
+  }
+  return { baseUrl: input.baseUrl, env, secretKeys };
 }
 
 function profileView(row: CypressProfileRow, stored: StoredCypressProfile): CypressProfileView {
+  const secretKeys = new Set(storedSecretKeys(stored));
   return {
     id: row.id,
     name: row.name,
     isDefault: row.is_default,
     baseUrl: stored.baseUrl,
-    okapiHost: String(stored.env.OKAPI_HOST || ""),
-    tenant: String(stored.env.OKAPI_TENANT || ""),
-    login: String(stored.env.diku_login || ""),
-    edgeHost: String(stored.env.EDGE_HOST || ""),
-    rtrAuth: stored.env.rtrAuth === true,
-    ecsEnabled: stored.env.ecsEnabled === true,
-    eureka: stored.env.eureka !== false,
-    systemRoleName: stored.env.systemRoleName ? String(stored.env.systemRoleName) : undefined,
-    ecsEnvironment: stored.env.ecs_env_name === "snapshot" || stored.env.ecs_env_name === "sprint" ? stored.env.ecs_env_name : undefined,
-    hasPassword: Boolean(stored.password),
-    hasEdgeApiKey: Boolean(stored.edgeApiKey),
+    variables: Object.entries(stored.env).map(([key, value]) => ({
+      key,
+      type: typeof value as "string" | "number" | "boolean",
+      value: secretKeys.has(key) ? "" : String(value),
+      secret: secretKeys.has(key),
+      hasValue: value !== "",
+    })),
   };
 }
 
@@ -201,7 +229,11 @@ export async function getCypressProfileSecret(ownerKey: string, profileId: strin
   if (!data) return null;
   const row = data as CypressProfileRow;
   const stored = await readSecret<StoredCypressProfile>(row.secret_id);
-  return { row, profile: profileView(row, stored), environment: { baseUrl: stored.baseUrl, env: stored.env } as CypressProfileSecret };
+  return {
+    row,
+    profile: profileView(row, stored),
+    environment: { baseUrl: stored.baseUrl, env: stored.env, secretKeys: storedSecretKeys(stored) } as CypressProfileSecret,
+  };
 }
 
 export async function saveCypressProfile(ownerKey: string, input: CypressProfileInput, profileId?: string) {

@@ -57,7 +57,7 @@ export interface DashboardData {
     launchNumber: number | null;
     launchId: number | null;
     launchStatus: string;
-    team: string;
+    fields: Array<{ key: string; label: string; value: string }>;
     historyDepth: number;
     source: "live" | "error";
     loadedAt: string;
@@ -69,7 +69,7 @@ export interface ReportSelection {
   project: string;
   launchName: string;
   launchId?: number;
-  team: string;
+  fields: Record<string, string>;
   historyDepth: number;
 }
 
@@ -97,7 +97,7 @@ export interface CypressRunRecord {
   browser: string;
   timeoutSeconds: number;
   environment?: string;
-  cypressConfig: Record<string, number | boolean>;
+  cypressConfig: Record<string, string | number | boolean>;
   requestedAt: string;
   status: CypressRunState;
   conclusion: string | null;

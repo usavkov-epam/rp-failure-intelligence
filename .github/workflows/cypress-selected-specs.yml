@@ -93,27 +93,18 @@ jobs:
             if (!Number.isInteger(number) || number < minimum || number > maximum) throw new Error(`Invalid ${name}`);
           }
           if (!['chrome', 'electron'].includes(process.env.BROWSER)) throw new Error('Invalid browser');
-          const rules = {
-            viewportWidth: ['CYPRESS_VIEWPORT_WIDTH', 320, 3840, 'number'],
-            viewportHeight: ['CYPRESS_VIEWPORT_HEIGHT', 320, 2160, 'number'],
-            defaultCommandTimeout: ['CYPRESS_DEFAULT_COMMAND_TIMEOUT', 1000, 300000, 'number'],
-            pageLoadTimeout: ['CYPRESS_PAGE_LOAD_TIMEOUT', 1000, 300000, 'number'],
-            requestTimeout: ['CYPRESS_REQUEST_TIMEOUT', 1000, 300000, 'number'],
-            responseTimeout: ['CYPRESS_RESPONSE_TIMEOUT', 1000, 300000, 'number'],
-            retries: ['CYPRESS_RETRIES', 0, 5, 'number'],
-            video: ['CYPRESS_VIDEO', null, null, 'boolean'],
-            screenshotOnRunFailure: ['CYPRESS_SCREENSHOT_ON_RUN_FAILURE', null, null, 'boolean'],
-          };
           if (!cypressConfig || Array.isArray(cypressConfig) || typeof cypressConfig !== 'object') {
             throw new Error('Invalid Cypress configuration');
           }
-          for (const [key, value] of Object.entries(cypressConfig)) {
-            const rule = rules[key];
-            if (!rule) throw new Error(`Unsupported Cypress configuration: ${key}`);
-            const [environmentVariable, minimum, maximum, type] = rule;
-            const validNumber = type === 'number' && Number.isInteger(value) && value >= minimum && value <= maximum;
-            const validBoolean = type === 'boolean' && typeof value === 'boolean';
-            if (!validNumber && !validBoolean) throw new Error(`Invalid Cypress configuration: ${key}`);
+          const entries = Object.entries(cypressConfig);
+          const blocked = new Set(['baseurl', 'env', 'specpattern', 'supportfile', 'fixturesfolder', 'downloadsfolder', 'screenshotsfolder', 'videosfolder', 'fileserverfolder', 'setupnodeevents', 'projectid']);
+          if (entries.length > 30) throw new Error('Too many Cypress configuration values');
+          for (const [key, value] of entries) {
+            if (!/^[a-z][A-Za-z0-9]{0,99}$/.test(key) || blocked.has(key.toLowerCase())) throw new Error(`Unsupported Cypress configuration: ${key}`);
+            if (!['string', 'number', 'boolean'].includes(typeof value) || (typeof value === 'number' && !Number.isFinite(value)) || (typeof value === 'string' && (value.length > 500 || /[\r\n]/.test(value)))) {
+              throw new Error(`Invalid Cypress configuration: ${key}`);
+            }
+            const environmentVariable = `CYPRESS_${key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase()}`;
             fs.appendFileSync(process.env.GITHUB_ENV, `${environmentVariable}=${value}\n`);
           }
           fs.writeFileSync('selected-specs.txt', `${[...new Set(specs)].join('\n')}\n`);
@@ -164,7 +155,10 @@ jobs:
             throw new Error('Invalid Cypress profile response');
           }
           const escapeWorkflowCommand = (value) => String(value).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
-          for (const key of ['diku_password', 'EDGE_API_KEY']) {
+          if (!snapshot.environment.env || Array.isArray(snapshot.environment.env) || typeof snapshot.environment.env !== 'object') throw new Error('Invalid Cypress profile environment');
+          const secretKeys = snapshot.environment.secretKeys || ['diku_password', 'EDGE_API_KEY'];
+          if (!Array.isArray(secretKeys) || secretKeys.some((key) => typeof key !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) throw new Error('Invalid Cypress secret keys');
+          for (const key of secretKeys) {
             const secret = snapshot.environment.env?.[key];
             if (typeof secret === 'string' && secret) process.stdout.write(`::add-mask::${escapeWorkflowCommand(secret)}\n`);
           }
