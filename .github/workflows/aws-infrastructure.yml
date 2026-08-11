@@ -1,0 +1,117 @@
+name: AWS infrastructure
+run-name: AWS ${{ inputs.operation }} by ${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: CDK operation
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - destroy
+      destroy_confirmation:
+        description: Type DESTROY when selecting destroy
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-infrastructure-production
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  DESTROY_CONFIRMATION: DESTROY
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  AWS_DEPLOYMENT_ENVIRONMENT: ${{ vars.AWS_DEPLOYMENT_ENVIRONMENT }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+  CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+  AWS_DYNAMODB_TABLE: ${{ vars.AWS_DYNAMODB_TABLE }}
+  WEB_PUSH_PUBLIC_KEY: ${{ vars.WEB_PUSH_PUBLIC_KEY }}
+  WEB_PUSH_PRIVATE_KEY_PARAMETER: ${{ vars.WEB_PUSH_PRIVATE_KEY_PARAMETER }}
+  VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
+  VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+  VERCEL_PROJECT_NAME: ${{ vars.VERCEL_PROJECT_NAME }}
+  VERCEL_OIDC_PROVIDER_ARN: ${{ vars.VERCEL_OIDC_PROVIDER_ARN }}
+  GITHUB_OIDC_PROVIDER_ARN: ${{ vars.GITHUB_OIDC_PROVIDER_ARN }}
+  GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+  GITHUB_REPOSITORY_NAME: ${{ github.event.repository.name }}
+  GITHUB_REPOSITORY_OWNER_ID: ${{ github.event.repository.owner.id }}
+  GITHUB_REPOSITORY_ID: ${{ github.event.repository.id }}
+  GITHUB_DEPLOYMENT_ENVIRONMENT: ${{ vars.AWS_DEPLOYMENT_ENVIRONMENT }}
+
+jobs:
+  infrastructure:
+    name: ${{ inputs.operation }} CDK stacks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ vars.AWS_DEPLOYMENT_ENVIRONMENT }}
+    steps:
+      - name: Validate request and repository configuration
+        env:
+          OPERATION: ${{ inputs.operation }}
+          PROVIDED_DESTROY_CONFIRMATION: ${{ inputs.destroy_confirmation }}
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          required_variables=(
+            AWS_ACCOUNT_ID
+            AWS_DEPLOYMENT_ENVIRONMENT
+            AWS_REGION
+            AWS_DEPLOY_ROLE_ARN
+            WEB_PUSH_PUBLIC_KEY
+            VAPID_SUBJECT
+            VERCEL_TEAM_SLUG
+            VERCEL_PROJECT_NAME
+          )
+          for variable_name in "${required_variables[@]}"; do
+            if [[ -z "${!variable_name:-}" ]]; then
+              echo "Missing GitHub repository variable: $variable_name" >&2
+              exit 1
+            fi
+          done
+          if [[ "$OPERATION" == "destroy" && "$PROVIDED_DESTROY_CONFIRMATION" != "$DESTROY_CONFIRMATION" ]]; then
+            echo "Destroy requires the exact confirmation: $DESTROY_CONFIRMATION" >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Configure Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Obtain short-lived AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: GitHubInfrastructure-${{ github.run_id }}
+          unset-current-credentials: true
+
+      - name: Deploy CDK stacks
+        if: inputs.operation == 'deploy'
+        run: |
+          pnpm exec cdk diff --all
+          pnpm exec cdk deploy --all --require-approval never
+
+      - name: Destroy CDK stacks
+        if: inputs.operation == 'destroy'
+        run: pnpm exec cdk destroy --all --force

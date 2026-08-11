@@ -9,6 +9,7 @@ Failure intelligence is a project-agnostic ReportPortal dashboard for exploring 
 - Encrypted configuration and one-time run snapshots in DynamoDB.
 - GitHub Actions dispatch and signed webhook tracking in hosted mode.
 - DynamoDB Streams, Lambda, and Web Push for event-driven run updates without browser polling.
+- GitHub OIDC deployment and destroy workflows without stored AWS access keys.
 - Local Docker mode with encrypted volume storage and an in-container Cypress CLI runner.
 
 ## Hosted architecture

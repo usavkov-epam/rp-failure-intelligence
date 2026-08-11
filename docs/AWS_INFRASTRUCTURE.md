@@ -1,6 +1,6 @@
 # AWS infrastructure setup
 
-This is a clean AWS deployment. Do not apply the removed Supabase migrations and do not copy Supabase data. The CDK application creates a DynamoDB table, a stream notifier Lambda, an SQS dead-letter queue, and a Vercel OIDC role.
+This is a clean AWS deployment. Do not apply the removed Supabase migrations and do not copy Supabase data. The CDK application creates a DynamoDB table, a stream notifier Lambda, an SQS dead-letter queue, a Vercel OIDC role, and a narrowly scoped GitHub Actions deployment role.
 
 ## 1. Generate Web Push keys
 
@@ -37,7 +37,8 @@ Set deployment-only variables in the shell:
 
 ```bash
 export CDK_DEFAULT_ACCOUNT='<account-id>'
-export CDK_DEFAULT_REGION='us-east-1'
+export AWS_REGION='us-east-1'
+export CDK_DEFAULT_REGION="$AWS_REGION"
 export VERCEL_TEAM_SLUG='<vercel-team-slug>'
 export VERCEL_PROJECT_NAME='<vercel-project-name>'
 export WEB_PUSH_PUBLIC_KEY='<public-key>'
@@ -51,6 +52,7 @@ Optional variables:
 - `AWS_DYNAMODB_TABLE` changes the default `rp-failure-intelligence` table name.
 - `WEB_PUSH_PRIVATE_KEY_PARAMETER` changes the default `/failure-intelligence/web-push-private-key` parameter path.
 - `VERCEL_OIDC_PROVIDER_ARN` reuses an existing provider for the same Vercel team. Set it when another project already created `oidc.vercel.com/<team-slug>` in this AWS account; AWS permits only one provider per issuer URL.
+- `GITHUB_OIDC_PROVIDER_ARN` reuses an existing `token.actions.githubusercontent.com` provider in the account. Set it before the first deployment when another stack owns that provider.
 
 Review before deploying:
 
@@ -67,7 +69,34 @@ pnpm infra:deploy
 
 The command keeps CDK's IAM-broadening approval prompt. It must not be automated away. The table has deletion protection and a retained removal policy.
 
-## 5. Configure Vercel
+## 5. Enable GitHub Actions infrastructure operations
+
+The first deployment must be performed manually because the GitHub deployment role does not exist yet. The stack output named `GitHubDeploymentRoleArn` is the only AWS identity the workflow needs; never create GitHub access-key secrets.
+
+Create a GitHub environment named `aws-production`. Add a required reviewer and restrict deployment branches to `main`. The IAM trust policy requires this environment and this repository's immutable owner/repository IDs, so workflows from forks, renamed namespaces, pull requests, or other environments cannot assume the role.
+
+Configure these repository variables under **Settings → Secrets and variables → Actions → Variables**:
+
+| Variable | Value |
+| --- | --- |
+| `AWS_ACCOUNT_ID` | The deployed AWS account ID |
+| `AWS_DEPLOYMENT_ENVIRONMENT` | `aws-production` |
+| `AWS_DEPLOY_ROLE_ARN` | `GitHubDeploymentRoleArn` stack output |
+| `AWS_REGION` | `AwsRegion` stack output |
+| `AWS_DYNAMODB_TABLE` | `DynamoDbTableName` stack output |
+| `WEB_PUSH_PUBLIC_KEY` | `WebPushPublicKey` stack output |
+| `WEB_PUSH_PRIVATE_KEY_PARAMETER` | `/failure-intelligence/web-push-private-key` unless overridden |
+| `VAPID_SUBJECT` | The same `mailto:` subject used for the manual deployment |
+| `VERCEL_TEAM_SLUG` | `yury-saukous-projects` |
+| `VERCEL_PROJECT_NAME` | `rp-failure-intelligence` |
+
+Set `VERCEL_OIDC_PROVIDER_ARN` or `GITHUB_OIDC_PROVIDER_ARN` only when the corresponding provider is owned by another stack.
+
+The **AWS infrastructure** workflow is manual-only. Select `deploy` to show the CDK diff and deploy every stack. Select `destroy` and type `DESTROY` exactly to destroy the CloudFormation stacks. The protected GitHub environment provides the human approval gate, allowing the non-interactive CDK deploy command to use `--require-approval never` safely.
+
+Destroy intentionally retains the DynamoDB table. It also leaves the CDK bootstrap bucket/roles, the SSM Web Push private-key parameter, GitHub variables, and the GitHub environment in place. Remove those explicitly only when their retained data and shared use have been reviewed.
+
+## 6. Configure Vercel
 
 Copy the CDK outputs to Vercel production environment variables:
 
@@ -83,7 +112,7 @@ DATA_ENCRYPTION_KEY=<new random value of at least 32 characters>
 
 Keep the existing hosted variables for Auth.js, GitHub OAuth, GitHub Actions dispatch, source links, and the GitHub webhook. Remove all old `NEXT_PUBLIC_SUPABASE_*` and `SUPABASE_*` variables.
 
-## 6. GitHub webhook
+## 7. GitHub webhook
 
 Keep the GitHub App/repository `workflow_run` webhook pointed at:
 

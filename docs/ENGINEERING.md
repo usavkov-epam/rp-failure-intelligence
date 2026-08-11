@@ -84,7 +84,7 @@ This configuration is designed for a low-volume application to stay inside AWS m
 | `src/lib/secure-value.ts` | Hosted AES-256-GCM value encryption |
 | `src/app/api/webhooks/github/route.ts` | Signed GitHub workflow webhook |
 | `infra/functions/push-notifier.ts` | Stream-to-Web-Push notification Lambda |
-| `infra/lib` | CDK storage, notifier, and Vercel IAM stacks |
+| `infra/lib` | CDK storage, notifier, Vercel runtime IAM, and GitHub deployment IAM stacks |
 | `src/lib/local-store.ts` | Encrypted local Docker persistence |
 | `src/lib/local-cypress-runner.ts` | In-container repository and Cypress execution |
 
