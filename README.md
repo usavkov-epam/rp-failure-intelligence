@@ -59,7 +59,7 @@ docker compose down
 
 Compose uses `ghcr.io/usavkov-epam/rp-failure-intelligence:local`. Override `FAILURE_INTELLIGENCE_IMAGE` to test an immutable `local-sha-…` tag or a locally built image. If the GHCR package is private, authenticate once before pulling.
 
-GitHub links work without additional infrastructure. GitHub Actions dispatch is optional: because a cloud runner cannot call `localhost`, executing selected specs still requires a GitHub token plus a reachable HTTPS callback URL and matching workflow configuration. The UI explicitly reports when dispatch is unavailable; analysis and profiles do not depend on it.
+GitHub links work without additional infrastructure. The local image never uses GitHub Actions: selected specs execute through Cypress CLI inside the container, with the project checkout, dependency/Cypress caches, logs, artifacts, and run history persisted in the Docker volume. Hosted mode retains GitHub Actions dispatch.
 
 ## Production Docker image
 

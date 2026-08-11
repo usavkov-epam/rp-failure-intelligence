@@ -40,6 +40,7 @@ function normalizeStatus(status: string): CypressRunState {
 }
 
 export async function POST(request: Request) {
+  if (config.isLocal) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const body = await request.text();
   if (!hasValidSignature(body, request.headers.get("x-hub-signature-256"))) {
     return NextResponse.json({ error: "Invalid webhook signature" }, { status: 401 });

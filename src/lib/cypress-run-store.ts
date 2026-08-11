@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { config } from "./config";
 import { readLocalStore, updateLocalStore, type LocalRunRecord } from "./local-store";
 import type { CypressRunRequest } from "./cypress-run-request";
-import type { CypressRunRecord, CypressRunState } from "./types";
+import type { CypressRunDetails, CypressRunRecord, CypressRunState } from "./types";
 
 interface CypressRunRow {
   request_id: string;
@@ -235,4 +235,40 @@ export async function broadcastRunChange(ownerKey: string, requestId: string) {
   });
 
   if (!response.ok) throw new Error(`Unable to broadcast Cypress run change: ${response.status}`);
+}
+
+export async function updateLocalCypressRun(
+  requestId: string,
+  update: (run: LocalRunRecord) => void,
+) {
+  if (!config.isLocal) throw new Error("Local Cypress execution is not enabled");
+  return updateLocalStore((store) => {
+    const run = store.runs.find((item) => item.requestId === requestId);
+    if (!run) return false;
+    update(run);
+    run.updatedAt = new Date().toISOString();
+    return true;
+  });
+}
+
+export async function getLocalCypressRunDetails(ownerKey: string, requestId: string): Promise<CypressRunDetails | null> {
+  if (!config.isLocal) return null;
+  const run = (await readLocalStore()).runs.find((item) => item.ownerKey === ownerKey && item.requestId === requestId);
+  if (!run) return null;
+  return {
+    jobs: run.localJobs || [],
+    artifacts: (run.localArtifacts || []).map((artifact) => ({
+      id: artifact.id,
+      name: artifact.name,
+      sizeInBytes: artifact.sizeInBytes,
+      createdAt: artifact.createdAt,
+      downloadUrl: artifact.downloadUrl,
+    })),
+  };
+}
+
+export async function getLocalCypressArtifact(ownerKey: string, requestId: string, artifactId: number) {
+  if (!config.isLocal) return null;
+  const run = (await readLocalStore()).runs.find((item) => item.ownerKey === ownerKey && item.requestId === requestId);
+  return run?.localArtifacts?.find((artifact) => artifact.id === artifactId) || null;
 }

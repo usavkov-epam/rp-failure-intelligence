@@ -14,8 +14,14 @@ export async function GET() {
 
   try {
     const ownerKey = getUserOwnerKey(session);
+    let runs = await listCypressRuns(ownerKey);
+    const configuration = (await import("@/lib/config")).config;
+    if (configuration.isLocal) {
+      const { recoverInterruptedLocalCypressRuns } = await import("@/lib/local-cypress-runner");
+      if (await recoverInterruptedLocalCypressRuns(runs)) runs = await listCypressRuns(ownerKey);
+    }
     return NextResponse.json({
-      runs: await listCypressRuns(ownerKey),
+      runs,
       channel: getRunChannel(ownerKey),
     });
   } catch (error) {
@@ -38,12 +44,7 @@ export async function POST(request: Request) {
   const ownerKey = getUserOwnerKey(session);
   const configuration = (await import("@/lib/config")).config;
   const { owner, repository, workflow } = configuration.githubActions;
-  if (configuration.isLocal && !configuration.githubActions.token) {
-    return NextResponse.json({
-      error: "GitHub Actions is optional in local mode and is not configured. Analysis, settings, and Cypress profiles remain available.",
-    }, { status: 409 });
-  }
-  const actionsUrl = `https://github.com/${owner}/${repository}/actions/workflows/${workflow}`;
+  const actionsUrl = configuration.isLocal ? "/runs" : `https://github.com/${owner}/${repository}/actions/workflows/${workflow}`;
   try {
     const [selectedProfile, dashboardSettings] = await Promise.all([
       getCypressProfileSecret(ownerKey, parsed.data.profileId),
@@ -57,8 +58,13 @@ export async function POST(request: Request) {
       id: selectedProfile.profile.id,
       name: selectedProfile.profile.name,
     });
-    await createRunProfileSnapshot(requestId, { name: selectedProfile.profile.name, environment: selectedProfile.environment });
-    await dispatchCypressRun(requestId, parsed.data, requestedBy);
+    if (configuration.isLocal) {
+      const { enqueueLocalCypressRun } = await import("@/lib/local-cypress-runner");
+      enqueueLocalCypressRun(requestId, parsed.data, selectedProfile.profile.name, selectedProfile.environment);
+    } else {
+      await createRunProfileSnapshot(requestId, { name: selectedProfile.profile.name, environment: selectedProfile.environment });
+      await dispatchCypressRun(requestId, parsed.data, requestedBy);
+    }
     return NextResponse.json({ requestId, actionsUrl, run }, { status: 202 });
   } catch (error) {
     await failCypressRunDispatch(requestId).catch(() => undefined);

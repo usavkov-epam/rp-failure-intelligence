@@ -117,7 +117,7 @@ export interface CypressRunDetails {
     conclusion: string | null;
     startedAt: string | null;
     completedAt: string | null;
-    htmlUrl: string;
+    htmlUrl?: string;
     steps: Array<{ name: string; number: number; status: string; conclusion: string | null }>;
   }>;
   artifacts: Array<{

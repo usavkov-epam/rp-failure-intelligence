@@ -4,7 +4,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { CypressRunRecord } from "./types";
+import type { CypressRunDetails, CypressRunRecord } from "./types";
 import type { CypressProfileSecret, DashboardSettingsInput, RunProfileSnapshot } from "./user-settings-schema";
 import { config } from "./config";
 
@@ -19,6 +19,8 @@ export interface LocalProfileRecord {
 export interface LocalRunRecord extends CypressRunRecord {
   ownerKey: string;
   requestedBy: string;
+  localJobs?: CypressRunDetails["jobs"];
+  localArtifacts?: Array<CypressRunDetails["artifacts"][number] & { path: string }>;
 }
 
 export interface LocalStoreData {

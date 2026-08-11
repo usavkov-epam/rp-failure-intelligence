@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { verifyGitHubActionsIdentity } from "@/lib/github-actions-oidc";
+import { config } from "@/lib/config";
 import { consumeRunProfileSnapshot } from "@/lib/user-settings";
 
 const querySchema = z.string().uuid();
 
 export async function GET(request: Request) {
+  if (config.isLocal) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const authorization = request.headers.get("authorization");
   if (!authorization?.startsWith("Bearer ")) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

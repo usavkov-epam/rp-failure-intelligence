@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, CircleAlert, Clock3, Download, ExternalLink, Loader2, PackageOpen } from "lucide-react";
+import { CheckCircle2, CircleAlert, Clock3, Download, ExternalLink, Loader2, PackageOpen, Square } from "lucide-react";
 import { toast } from "sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -49,6 +49,7 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
   const [details, setDetails] = useState<CypressRunDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState("");
+  const [cancellingId, setCancellingId] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -83,7 +84,7 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
     setSelectedRun(run);
     setDetails(null);
     setDetailsError("");
-    if (!run.runId) return;
+    if (!localMode && !run.runId) return;
     setDetailsLoading(true);
     try {
       const response = await fetch(`/api/runs/${run.requestId}`, { cache: "no-store" });
@@ -97,20 +98,35 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
     }
   };
 
+  const cancelRun = async (run: CypressRunRecord) => {
+    setCancellingId(run.requestId);
+    try {
+      const response = await fetch(`/api/runs/${run.requestId}`, { method: "DELETE" });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || "Unable to cancel Cypress run");
+      setRuns((current) => current.map((item) => item.requestId === run.requestId ? { ...item, conclusion: "cancelling" } : item));
+      toast("Cancellation requested", { description: `Run ${run.requestId.slice(0, 8)}` });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to cancel Cypress run");
+    } finally {
+      setCancellingId("");
+    }
+  };
+
   return (
     <>
       <AppHeader currentPage="runs" userName={userName} activeProject={activeProject} localMode={localMode} />
       <main className="pb-16">
         <section className="border-b bg-gradient-to-br from-muted/70 via-background to-destructive/5">
           <div className="mx-auto max-w-[1800px] px-4 py-10 lg:px-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">GitHub Actions</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{localMode ? "Local Cypress CLI" : "GitHub Actions"}</p>
             <h1 className="mt-2 text-4xl font-semibold tracking-tight lg:text-5xl">Cypress runs</h1>
-            <p className="mt-2 text-muted-foreground">Live run status, job steps, configuration, and downloadable result artifacts.</p>
+            <p className="mt-2 text-muted-foreground">{localMode ? "Container-executed Cypress jobs, CLI logs, configuration, and downloadable result artifacts." : "Live run status, job steps, configuration, and downloadable result artifacts."}</p>
           </div>
         </section>
         <div className="mx-auto max-w-[1800px] space-y-4 px-4 py-6 lg:px-6">
           {statusError && <Alert><CircleAlert /><AlertTitle>Status updates delayed</AlertTitle><AlertDescription>{statusError}</AlertDescription></Alert>}
-          {localMode && <Alert><CircleAlert /><AlertTitle>Local workspace</AlertTitle><AlertDescription>Settings, profiles, and run history are stored in the encrypted Docker volume. GitHub Actions execution is optional and requires hosted callback configuration.</AlertDescription></Alert>}
+          {localMode && <Alert><CircleAlert /><AlertTitle>Local runner</AlertTitle><AlertDescription>Cypress executes inside this container. The project checkout, dependency cache, CLI logs, artifacts, settings, and run history persist in the Docker volume.</AlertDescription></Alert>}
           {!runs.length ? (
             <Card className="py-10 text-center"><CardHeader><CardTitle>No Cypress runs</CardTitle><CardDescription>Select failures on the Analysis page and start a run.</CardDescription></CardHeader></Card>
           ) : (
@@ -133,7 +149,8 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
                     </div>
                     <div className="flex gap-1">
                       <Button variant="outline" size="sm" onClick={() => void openDetails(run)}>Details</Button>
-                      <Button asChild variant="ghost" size="icon-sm"><Link href={run.actionsUrl} target="_blank" rel="noreferrer" aria-label="Open GitHub Actions"><ExternalLink /></Link></Button>
+                      {localMode && run.status !== "completed" && <Button variant="ghost" size="icon-sm" disabled={cancellingId === run.requestId} onClick={() => void cancelRun(run)} aria-label="Cancel local run">{cancellingId === run.requestId ? <Loader2 className="animate-spin" /> : <Square />}</Button>}
+                      {!localMode && <Button asChild variant="ghost" size="icon-sm"><Link href={run.actionsUrl} target="_blank" rel="noreferrer" aria-label="Open GitHub Actions"><ExternalLink /></Link></Button>}
                     </div>
                   </div>
                 ))}
@@ -149,22 +166,22 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
           {selectedRun && (
             <div className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-3">
-                <Card className="py-3"><CardContent><p className="text-xs text-muted-foreground">Result</p><p className="mt-1 font-semibold capitalize">{selectedRun.conclusion || selectedRun.status}</p></CardContent></Card>
+                <Card className="py-3"><CardContent><p className="text-xs text-muted-foreground">Result</p><p className="mt-1 font-semibold capitalize">{(selectedRun.conclusion || selectedRun.status).replaceAll("_", " ")}</p></CardContent></Card>
                 <Card className="py-3"><CardContent><p className="text-xs text-muted-foreground">Duration</p><p className="mt-1 font-semibold">{formatRunDuration(selectedRun)}</p></CardContent></Card>
                 <Card className="py-3"><CardContent><p className="text-xs text-muted-foreground">Work</p><p className="mt-1 font-semibold">{selectedRun.specs.length * selectedRun.runs} spec executions</p></CardContent></Card>
               </div>
               <div><h3 className="text-sm font-semibold">Selected specs</h3><div className="mt-2 max-h-32 overflow-auto rounded-lg border bg-muted/30 p-3 font-mono text-xs">{selectedRun.specs.map((spec) => <div key={spec}>{spec}</div>)}</div></div>
               <div><h3 className="text-sm font-semibold">Configuration</h3><div className="mt-2 grid gap-2 text-sm sm:grid-cols-2"><p><span className="text-muted-foreground">Profile:</span> {selectedRun.environment || "Configured environment"}</p><p><span className="text-muted-foreground">Browser:</span> {selectedRun.browser}</p><p><span className="text-muted-foreground">Threads:</span> {selectedRun.threads}</p><p><span className="text-muted-foreground">Timeout:</span> {selectedRun.timeoutSeconds}s</p></div>{Object.keys(selectedRun.cypressConfig).length > 0 && <pre className="mt-2 overflow-auto rounded-lg border bg-muted/30 p-3 text-xs">{JSON.stringify(selectedRun.cypressConfig, null, 2)}</pre>}</div>
               <Separator />
-              {detailsLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading GitHub results…</div>}
+              {detailsLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading run results…</div>}
               {detailsError && <Alert variant="destructive"><CircleAlert /><AlertTitle>Details unavailable</AlertTitle><AlertDescription>{detailsError}</AlertDescription></Alert>}
               {details && (
                 <>
-                  <div><h3 className="text-sm font-semibold">Job results</h3><div className="mt-2 space-y-3">{details.jobs.map((job) => <Card key={job.id} className="py-3"><CardContent><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2">{job.conclusion === "success" ? <CheckCircle2 className="size-4 text-emerald-600" /> : <CircleAlert className="size-4 text-destructive" />}<span className="font-medium">{job.name}</span></div><Button asChild variant="ghost" size="xs"><Link href={job.htmlUrl} target="_blank">Open job<ExternalLink /></Link></Button></div><div className="mt-3 grid gap-1 sm:grid-cols-2">{job.steps.map((step) => <div key={step.number} className="flex items-center gap-2 text-xs"><span className={step.conclusion === "success" ? "text-emerald-600" : step.conclusion === "failure" ? "text-destructive" : "text-muted-foreground"}>{step.conclusion === "success" ? "✓" : step.conclusion === "failure" ? "✕" : "•"}</span><span>{step.name}</span></div>)}</div></CardContent></Card>)}</div></div>
+                  <div><h3 className="text-sm font-semibold">Job results</h3><div className="mt-2 space-y-3">{details.jobs.map((job) => <Card key={job.id} className="py-3"><CardContent><div className="flex items-center justify-between gap-2"><div className="flex min-w-0 items-center gap-2">{job.conclusion === "success" ? <CheckCircle2 className="size-4 shrink-0 text-emerald-600" /> : <CircleAlert className="size-4 shrink-0 text-destructive" />}<span className="break-all font-medium">{job.name}</span></div>{job.htmlUrl && <Button asChild variant="ghost" size="xs"><Link href={job.htmlUrl} target="_blank">Open job<ExternalLink /></Link></Button>}</div><div className="mt-3 grid gap-1 sm:grid-cols-2">{job.steps.map((step) => <div key={step.number} className="flex items-center gap-2 text-xs"><span className={step.conclusion === "success" ? "text-emerald-600" : step.conclusion === "failure" ? "text-destructive" : "text-muted-foreground"}>{step.conclusion === "success" ? "✓" : step.conclusion === "failure" ? "✕" : "•"}</span><span>{step.name}</span></div>)}</div></CardContent></Card>)}</div></div>
                   <div><h3 className="text-sm font-semibold">Result artifacts</h3>{details.artifacts.length ? <div className="mt-2 grid gap-2 sm:grid-cols-2">{details.artifacts.map((artifact) => <Card key={artifact.id} className="py-3"><CardContent className="flex items-center justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2"><PackageOpen className="size-4" /><p className="truncate text-sm font-medium">{artifact.name}</p></div><p className="mt-1 text-xs text-muted-foreground">{formatBytes(artifact.sizeInBytes)}</p></div><Button asChild variant="outline" size="icon-sm"><Link href={artifact.downloadUrl} aria-label={`Download ${artifact.name}`}><Download /></Link></Button></CardContent></Card>)}</div> : <p className="mt-2 text-sm text-muted-foreground">No downloadable artifacts were published.</p>}</div>
                 </>
               )}
-              {!selectedRun.runId && <Alert><Clock3 /><AlertTitle>Waiting for GitHub</AlertTitle><AlertDescription>Job details will appear after GitHub Actions assigns a run.</AlertDescription></Alert>}
+              {!localMode && !selectedRun.runId && <Alert><Clock3 /><AlertTitle>Waiting for GitHub</AlertTitle><AlertDescription>Job details will appear after GitHub Actions assigns a run.</AlertDescription></Alert>}
             </div>
           )}
         </DialogContent>

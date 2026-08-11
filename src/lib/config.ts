@@ -31,6 +31,8 @@ const environmentSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
   LOCAL_DATA_DIR: z.string().min(1).default(".failure-intelligence"),
   LOCAL_ENCRYPTION_KEY: z.string().min(32).optional(),
+  LOCAL_RUNNER_REPOSITORY_URL: z.string().url().optional(),
+  LOCAL_RUNNER_REF: z.string().min(1).optional(),
 }).superRefine((env, context) => {
   if (env.APP_MODE === "hosted") {
     for (const key of ["AUTH_SECRET", "AUTH_GITHUB_ID", "AUTH_GITHUB_SECRET"] as const) {
@@ -99,5 +101,11 @@ export const config = {
   localStorage: {
     dataDirectory: env.LOCAL_DATA_DIR,
     encryptionKey: env.LOCAL_ENCRYPTION_KEY,
+  },
+  localRunner: {
+    repositoryUrl: env.LOCAL_RUNNER_REPOSITORY_URL || `https://github.com/${env.GITHUB_SOURCE_OWNER}/${env.GITHUB_SOURCE_REPO}.git`,
+    ref: env.LOCAL_RUNNER_REF || env.GITHUB_SOURCE_REF,
+    workspaceDirectory: `${env.LOCAL_DATA_DIR}/runner/project`,
+    runsDirectory: `${env.LOCAL_DATA_DIR}/runner/runs`,
   },
 } as const;

@@ -18,7 +18,12 @@ export default async function RunsPage() {
   const { url, anonKey } = config.supabase;
   if (!config.isLocal && (!url || !anonKey)) throw new Error("Supabase run history is not configured");
 
-  const [runs, dashboardSettings] = await Promise.all([listCypressRuns(ownerKey), getDashboardSettings(ownerKey)]);
+  const [initialRuns, dashboardSettings] = await Promise.all([listCypressRuns(ownerKey), getDashboardSettings(ownerKey)]);
+  let runs = initialRuns;
+  if (config.isLocal) {
+    const { recoverInterruptedLocalCypressRuns } = await import("@/lib/local-cypress-runner");
+    if (await recoverInterruptedLocalCypressRuns(runs)) runs = await listCypressRuns(ownerKey);
+  }
   return <RunsView
     initialRuns={runs}
     channelName={getRunChannel(ownerKey)}

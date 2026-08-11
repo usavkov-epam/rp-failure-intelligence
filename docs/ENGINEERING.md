@@ -4,7 +4,7 @@
 
 Failure Intelligence is an authenticated, read-only analytics application for investigating failed automated tests stored in ReportPortal. It uses a persistent user-selected ReportPortal project as global context and lets an authorized user select a launch name, specific completed run, configured report fields, and history depth; inspect failure patterns; and open the corresponding Cypress source, ReportPortal log, or TestRail case.
 
-ReportPortal is the source of truth for failure data and analytics. Supabase persists Cypress workflow metadata and user-owned configuration; secret values use Supabase Vault authenticated encryption. The application contains no bundled report or fallback test data.
+ReportPortal is the source of truth for failure data and analytics. Hosted mode uses Supabase for Cypress workflow metadata and user-owned configuration, with secret values protected by Supabase Vault authenticated encryption. The self-contained local Docker image uses encrypted volume-backed storage instead. The application contains no bundled report or fallback test data.
 
 ## Product Boundaries
 
@@ -15,17 +15,17 @@ The application:
 - Authenticates users with GitHub OAuth and restricts access by active organization membership or a static GitHub-login allowlist.
 - Creates read-only links to a configured GitHub source repository.
 - Optionally creates TestRail links from test case identifiers.
-- Dispatches explicitly selected Cypress specs to a bounded GitHub Actions workflow.
+- Dispatches explicitly selected Cypress specs to a bounded GitHub Actions workflow in hosted mode, or executes them with an internal Cypress CLI runner in local Docker mode.
 - Tracks dispatched workflow status, conclusion, duration, and artifact availability through signed GitHub webhooks, Supabase, and the GitHub Actions artifact API.
 - Deploys as a Next.js application on Vercel.
 
 The application does not:
 
-- Run Cypress tests inside the dashboard or Vercel runtime.
+- Run Cypress tests inside the hosted dashboard or Vercel runtime.
 - Modify the configured source repository.
 - Store ReportPortal reports or OAuth tokens in Supabase, or store API/test credentials outside Vault.
 - Show bundled, synthetic, cached, or cross-launch fallback report data.
-- Allow unauthenticated local development access.
+- Treat the single-user local Docker image as a multi-user or network-facing deployment.
 
 ## Primary Use Cases
 
@@ -78,6 +78,7 @@ flowchart LR
 | `src/lib/reportportal.ts` | Integration boundary | Paginated ReportPortal discovery, launch resolution, item/history loading, explicit empty/error outcomes |
 | `src/lib/pagination.ts` | Pagination utility | Ordered, bounded-concurrency traversal of every page returned by ReportPortal |
 | `src/lib/cypress-runs.ts` | Execution boundary | Authenticated GitHub Actions workflow dispatch and completed-run artifact discovery |
+| `src/lib/local-cypress-runner.ts` | Local execution boundary | Cached source preparation, package installation, bounded Cypress CLI concurrency, cancellation, logs, and artifacts |
 | `src/lib/cypress-run-store.ts` | Persistence boundary | Service-role run storage, user-scoped listing, updates, HMAC channel names, and Broadcast publishing |
 | `src/lib/cypress-run-request.ts` | Validation boundary | Selected spec paths and bounded runner settings |
 | `src/lib/user-settings.ts` | Secret/configuration boundary | Owner-scoped metadata, Supabase Vault operations, profiles, and one-time run snapshots |
@@ -161,7 +162,7 @@ The Analysis page owns failure selection and workflow dispatch. The authenticate
 
 ## Authentication and Authorization
 
-Authentication is mandatory in every environment, including local development.
+Authentication is mandatory in hosted mode and native source development. The distinct `:local` Docker image has one implicit developer identity and is restricted to a loopback-bound, single-user workstation workflow. See [Local Docker Guide](LOCAL_DOCKER.md).
 
 1. Auth.js redirects the user to GitHub OAuth with identity scopes; `read:org` is added only in organization mode.
 2. `AUTHORIZATION_MODE` selects `organization` or `users`; configuration validation requires a non-empty allowlist for the selected mode.
@@ -170,7 +171,7 @@ Authentication is mandatory in every environment, including local development.
 5. Every protected request revalidates the current identity against the active mode and deployment configuration.
 6. The browser-visible session contains display identity and a non-secret authorization context, but never the GitHub access token.
 
-There is no local bypass flag. Missing OAuth configuration fails application configuration validation.
+Production mode never falls back to local mode. Missing hosted OAuth configuration fails application configuration validation. Local mode must be explicitly selected by the dedicated Docker target, which also configures its encrypted persistent storage.
 
 ### Local OAuth configuration
 
@@ -407,7 +408,7 @@ The Dockerfile produces two deliberately separate runtime targets from the same 
 
 Compose pulls the local target, binds only to loopback, drops Linux capabilities, enables `no-new-privileges`, and mounts a named volume at `/data`. Its entrypoint creates a random secret on first boot. The application derives an AES-256-GCM key from it and atomically stores settings, credentials, Cypress profiles, snapshots, and run records in an encrypted envelope. The local target has no Supabase or OAuth dependency and must never be exposed directly to a network because it intentionally has no login boundary.
 
-The publishing workflow creates both targets for `linux/amd64` and `linux/arm64` with provenance and an SBOM. Vercel remains the supported production host. GitHub Actions dispatch from local mode is optional and still needs a reachable HTTPS callback because hosted runners cannot reach localhost.
+The local target additionally installs Git, Chromium, Xvfb, and the Cypress Linux prerequisites. It clones or updates the configured test repository, installs from its frozen lockfile, and persists package/Cypress caches, CLI logs, and artifacts under `/data/runner`. Local mode never dispatches GitHub Actions and disables its OIDC-profile and webhook endpoints. The publishing workflow creates both targets for `linux/amd64` and `linux/arm64` with provenance and an SBOM. Vercel remains the supported production host.
 
 ## Known Limitations and Next Work
 
