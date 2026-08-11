@@ -12,6 +12,7 @@ import EditRounded from "@mui/icons-material/EditRounded";
 import SaveRounded from "@mui/icons-material/SaveRounded";
 
 import { defaultCypressConfigFields, legacyReportFields } from "@/lib/configuration-mappings";
+import { dashboardSettingsFormValue } from "@/lib/dashboard-settings-form";
 import type {
   CypressProfileInput, CypressProfileView, DashboardSettingsInput, DashboardSettingsView,
 } from "@/lib/user-settings-schema";
@@ -47,12 +48,9 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
   userName: string;
 }) {
   const [section, setSection] = useState(0);
-  const [dashboard, setDashboard] = useState<DashboardSettingsInput>({
-    ...emptyDashboard,
-    ...initialDashboardSettings,
-    reportPortalApiKey: "",
-    testRailApiKey: "",
-  });
+  const [dashboard, setDashboard] = useState<DashboardSettingsInput>(() => (
+    dashboardSettingsFormValue(initialDashboardSettings, emptyDashboard)
+  ));
   const [profiles, setProfiles] = useState(initialCypressProfiles);
   const [profile, setProfile] = useState<CypressProfileInput>(emptyProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -80,7 +78,7 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
         method: "PUT",
         body: JSON.stringify(dashboard),
       });
-      setDashboard((current) => ({ ...current, ...result.settings, reportPortalApiKey: "", testRailApiKey: "" }));
+      setDashboard(dashboardSettingsFormValue(result.settings, emptyDashboard));
       setMessage("Settings saved securely.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save settings");

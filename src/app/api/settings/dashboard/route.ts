@@ -20,7 +20,11 @@ export async function PUT(request: Request) {
   const session = await getAuthorizedSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = dashboardSettingsInputSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ error: "Invalid dashboard settings" }, { status: 400 });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const field = issue.path.length ? ` (${issue.path.join(".")})` : "";
+    return NextResponse.json({ error: `Invalid dashboard settings${field}: ${issue.message}` }, { status: 400 });
+  }
   try {
     return NextResponse.json({ settings: await saveDashboardSettings(getUserOwnerKey(session), parsed.data) });
   } catch (error) {
