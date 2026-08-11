@@ -94,6 +94,7 @@ flowchart LR
 | `src/app/api/runs/route.ts` | Authenticated run API | User-scoped run listing and validated workflow dispatch |
 | `src/app/api/webhooks/github/route.ts` | Webhook boundary | HMAC, repository, workflow, and request-ID validation; run updates and broadcasts |
 | `supabase/migrations` | Database schema | Run metadata, owner-scoped settings, Vault references, one-time profile claims, constraints, and RLS |
+| `Dockerfile`, `compose.yaml` | Portable runtime | Multi-stage standalone image and the prebuilt-image developer launcher |
 | `src/types` | Framework augmentation | Auth.js session and JWT type extensions |
 
 ### Request flow
@@ -399,6 +400,14 @@ Production deployment uses Vercel:
 7. Verify sign-in, authorization rejection, ReportPortal live/empty/error states, source links, dispatch, `/runs`, webhook updates, and artifact links.
 
 The current production alias is `https://rp-failure-intelligence.vercel.app`. Auth.js uses encrypted JWT sessions; Supabase stores metadata and Vault-encrypted user configuration. OpenNext configuration remains available for evaluation but is not the production path.
+
+### Container distribution
+
+The Docker image is a runtime artifact, not a credential bundle. A multi-stage build creates Next.js standalone output and copies only the traced server, static assets, and public files into a non-root Node.js runtime. Build-stage authentication values are inert placeholders used only because route collection validates the configuration module; they are not copied into the final image.
+
+The default Compose workflow pulls `ghcr.io/usavkov-epam/rp-failure-intelligence:latest`, reads ignored runtime values from `.env.docker.local`, drops Linux capabilities, and enables `no-new-privileges`. A dedicated shared development Supabase project is the lowest-effort backend. Its migrations are applied once by the project maintainer, not by every image consumer. Because container operators can inspect `SUPABASE_SERVICE_ROLE_KEY`, a shared backend may contain only disposable test data and test integration credentials. Use separate per-developer Supabase projects when stronger isolation is required. Production service-role credentials must never be distributed.
+
+The image publishing workflow creates `linux/amd64` and `linux/arm64` images with `latest`, Git tag, and immutable commit-SHA tags, plus provenance and an SBOM. Vercel remains the supported production host; the image is intended for local development and optional self-hosting.
 
 ## Known Limitations and Next Work
 

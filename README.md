@@ -19,7 +19,51 @@ The included `.env.example` demonstrates read-only source links to `folio-org/st
 
 GitHub OAuth establishes the user's identity. In organization mode, the token also verifies active organization membership. A separate server-only token dispatches the bounded selected-spec workflow; the app does not modify the source repository.
 
-## Local Setup
+## Docker Quick Start
+
+The supported low-effort developer path uses the prebuilt GHCR image and a dedicated shared development Supabase project. Developers do not need Node.js, pnpm, the Supabase CLI, or a local database.
+
+Prerequisites:
+
+- Docker Desktop or another Docker Compose-compatible runtime.
+- A GitHub OAuth App configured with homepage `http://localhost:8080` and callback `http://localhost:8080/api/auth/callback/github`. A shared development OAuth App can be used by the team.
+- The URL, anon key, and service-role key for a dedicated development Supabase project with this repository's migrations already applied. Anyone receiving the service-role key is an administrator of that development backend, so it must contain only disposable test data and test integration credentials. Never share production Supabase credentials.
+
+Start the dashboard:
+
+```bash
+cp .env.docker.example .env.docker.local
+openssl rand -base64 32 # copy the result to AUTH_SECRET
+# Fill the GitHub OAuth, allowlist, and development Supabase values.
+docker compose up -d
+```
+
+Open [http://localhost:8080](http://localhost:8080), sign in, and configure ReportPortal and Cypress profiles in **Settings**. These integrations remain user-owned Vault configuration and are not container environment variables.
+
+For stronger isolation, give each developer a separate Supabase development project. A shared project offers the least setup effort but should only be used with non-production ReportPortal, TestRail, and Cypress credentials because every container operator can inspect its service-role environment value.
+
+Check status and logs:
+
+```bash
+docker compose ps
+docker compose logs -f dashboard
+```
+
+Pull a newer image or stop the dashboard:
+
+```bash
+docker compose pull
+docker compose up -d
+docker compose down
+```
+
+The default image is `ghcr.io/usavkov-epam/rp-failure-intelligence:latest`. Override it with `FAILURE_INTELLIGENCE_IMAGE` when testing a pinned SHA tag or a locally built image. If the GHCR package is private, authenticate once with an authorized GitHub token before starting Compose.
+
+GitHub Actions dispatch is optional for analysis-only development. Enabling selected Cypress runs additionally requires the Actions and webhook variables in `.env.docker.local`, a reachable HTTPS dashboard URL, and the matching `DASHBOARD_BASE_URL` Actions variable.
+
+## Native Local Setup
+
+Use this path when actively changing application code and you want Next.js hot reload.
 
 ```bash
 corepack enable
@@ -89,6 +133,8 @@ Configure `GITHUB_SOURCE_OWNER`, `GITHUB_SOURCE_REPO`, and `GITHUB_SOURCE_REF` t
 ## Production Deployment
 
 Production is deployed to Vercel at [rp-failure-intelligence.vercel.app](https://rp-failure-intelligence.vercel.app). The repository is linked to the `rp-failure-intelligence` Vercel project.
+
+Every push to `main` also publishes multi-platform `linux/amd64` and `linux/arm64` images to GitHub Container Registry with `latest` and commit-SHA tags. The image contains no runtime credentials. It uses the minimal Next.js standalone server, runs as a non-root user, and receives all deployment configuration when the container starts.
 
 1. Configure all values from `.env.example` in the Vercel project. ReportPortal, TestRail, and Cypress user credentials are not deployment variables.
 2. Apply the Supabase migrations and enable Realtime for the project.

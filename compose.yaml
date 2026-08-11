@@ -1,0 +1,17 @@
+name: failure-intelligence
+
+services:
+  dashboard:
+    image: ${FAILURE_INTELLIGENCE_IMAGE:-ghcr.io/usavkov-epam/rp-failure-intelligence:latest}
+    pull_policy: always
+    init: true
+    restart: unless-stopped
+    env_file:
+      - path: .env.docker.local
+        required: true
+    ports:
+      - "${DASHBOARD_PORT:-8080}:8080"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
