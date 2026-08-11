@@ -19,28 +19,28 @@ The included `.env.example` demonstrates read-only source links to `folio-org/st
 
 GitHub OAuth establishes the user's identity. In organization mode, the token also verifies active organization membership. A separate server-only token dispatches the bounded selected-spec workflow; the app does not modify the source repository.
 
-## Docker Quick Start
+## Zero-setup local Docker
 
-The supported low-effort developer path uses the prebuilt GHCR image and a dedicated shared development Supabase project. Developers do not need Node.js, pnpm, the Supabase CLI, or a local database.
+The `:local` image is a single-user developer workspace. It needs only Docker: no Supabase project, database, GitHub OAuth App, Node.js, pnpm, environment file, or manually generated secret.
 
-Prerequisites:
-
-- Docker Desktop or another Docker Compose-compatible runtime.
-- A GitHub OAuth App configured with homepage `http://localhost:8080` and callback `http://localhost:8080/api/auth/callback/github`. A shared development OAuth App can be used by the team.
-- The URL, anon key, and service-role key for a dedicated development Supabase project with this repository's migrations already applied. Anyone receiving the service-role key is an administrator of that development backend, so it must contain only disposable test data and test integration credentials. Never share production Supabase credentials.
-
-Start the dashboard:
+Start it with Compose:
 
 ```bash
-cp .env.docker.example .env.docker.local
-openssl rand -base64 32 # copy the result to AUTH_SECRET
-# Fill the GitHub OAuth, allowlist, and development Supabase values.
 docker compose up -d
 ```
 
-Open [http://localhost:8080](http://localhost:8080), sign in, and configure ReportPortal and Cypress profiles in **Settings**. These integrations remain user-owned Vault configuration and are not container environment variables.
+Or run the image directly:
 
-For stronger isolation, give each developer a separate Supabase development project. A shared project offers the least setup effort but should only be used with non-production ReportPortal, TestRail, and Cypress credentials because every container operator can inspect its service-role environment value.
+```bash
+docker run -d --name failure-intelligence \
+  -p 127.0.0.1:8080:8080 \
+  -v failure-intelligence-data:/data \
+  ghcr.io/usavkov-epam/rp-failure-intelligence:local
+```
+
+Open [http://localhost:8080](http://localhost:8080) and configure ReportPortal and Cypress profiles in **Settings**. The container generates its encryption secret on first start. Settings, API keys, profiles, and run history are AES-256-GCM encrypted in the `failure-intelligence-data` volume and survive image upgrades. The key is stored separately in the same volume with owner-only permissions.
+
+The port is intentionally bound to `127.0.0.1`: local mode has one implicit user and must not be exposed to a network. Encryption prevents credentials from appearing as plaintext in the data file, logs, or browser responses; it does not protect against someone who controls the Docker host or can copy both the data and its generated key. Removing the volume deletes the local workspace permanently.
 
 Check status and logs:
 
@@ -57,9 +57,13 @@ docker compose up -d
 docker compose down
 ```
 
-The default image is `ghcr.io/usavkov-epam/rp-failure-intelligence:latest`. Override it with `FAILURE_INTELLIGENCE_IMAGE` when testing a pinned SHA tag or a locally built image. If the GHCR package is private, authenticate once with an authorized GitHub token before starting Compose.
+Compose uses `ghcr.io/usavkov-epam/rp-failure-intelligence:local`. Override `FAILURE_INTELLIGENCE_IMAGE` to test an immutable `local-sha-…` tag or a locally built image. If the GHCR package is private, authenticate once before pulling.
 
-GitHub Actions dispatch is optional for analysis-only development. Enabling selected Cypress runs additionally requires the Actions and webhook variables in `.env.docker.local`, a reachable HTTPS dashboard URL, and the matching `DASHBOARD_BASE_URL` Actions variable.
+GitHub links work without additional infrastructure. GitHub Actions dispatch is optional: because a cloud runner cannot call `localhost`, executing selected specs still requires a GitHub token plus a reachable HTTPS callback URL and matching workflow configuration. The UI explicitly reports when dispatch is unavailable; analysis and profiles do not depend on it.
+
+## Production Docker image
+
+The separate `:latest`, Git tag, and `sha-…` images retain hosted behavior: GitHub OAuth authorization and Supabase-backed multi-user storage are mandatory. Use `.env.docker.example` as the runtime configuration reference. Production mode never falls back to the unauthenticated local user.
 
 ## Native Local Setup
 
@@ -80,7 +84,7 @@ Create a separate GitHub OAuth App for local development:
 - Set its client ID as `AUTH_GITHUB_ID` and client secret as `AUTH_GITHUB_SECRET` in `.env.local`.
 - Choose `AUTHORIZATION_MODE=organization` and set `AUTH_ALLOWED_ORGS`, or choose `AUTHORIZATION_MODE=users` and set `AUTH_ALLOWED_USERS`.
 
-Run the app and open [http://localhost:8080](http://localhost:8080). The `pnpm dev` script binds to `localhost:8080`; use that exact host and port in the registered callback. Authentication is required in every environment, and there is no local bypass.
+Run the app and open [http://localhost:8080](http://localhost:8080). The `pnpm dev` script binds to `localhost:8080`; use that exact host and port in the registered callback. Native development uses hosted mode by default; the authentication bypass exists only when `APP_MODE=local` is explicitly selected with local encrypted storage configured.
 
 After the first sign-in, open **Settings** and configure your ReportPortal connection and dashboard defaults. Credentials are written to Supabase Vault through authenticated server routes and are never returned to the browser after saving. Valid responses without matching failures show `No data`. Live requests use `launch`, `item/v2`, and `item/history`.
 

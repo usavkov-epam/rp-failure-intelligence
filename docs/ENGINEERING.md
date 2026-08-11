@@ -403,11 +403,11 @@ The current production alias is `https://rp-failure-intelligence.vercel.app`. Au
 
 ### Container distribution
 
-The Docker image is a runtime artifact, not a credential bundle. A multi-stage build creates Next.js standalone output and copies only the traced server, static assets, and public files into a non-root Node.js runtime. Build-stage authentication values are inert placeholders used only because route collection validates the configuration module; they are not copied into the final image.
+The Dockerfile produces two deliberately separate runtime targets from the same standalone build. The production target is published as `latest`, Git tags, and `sha-…` tags and requires GitHub OAuth plus Supabase. The local target is published as `local`, `local-<Git tag>`, and `local-sha-…`; it has one implicit user and encrypted file-backed persistence. Production mode never automatically degrades to local mode.
 
-The default Compose workflow pulls `ghcr.io/usavkov-epam/rp-failure-intelligence:latest`, reads ignored runtime values from `.env.docker.local`, drops Linux capabilities, and enables `no-new-privileges`. A dedicated shared development Supabase project is the lowest-effort backend. Its migrations are applied once by the project maintainer, not by every image consumer. Because container operators can inspect `SUPABASE_SERVICE_ROLE_KEY`, a shared backend may contain only disposable test data and test integration credentials. Use separate per-developer Supabase projects when stronger isolation is required. Production service-role credentials must never be distributed.
+Compose pulls the local target, binds only to loopback, drops Linux capabilities, enables `no-new-privileges`, and mounts a named volume at `/data`. Its entrypoint creates a random secret on first boot. The application derives an AES-256-GCM key from it and atomically stores settings, credentials, Cypress profiles, snapshots, and run records in an encrypted envelope. The local target has no Supabase or OAuth dependency and must never be exposed directly to a network because it intentionally has no login boundary.
 
-The image publishing workflow creates `linux/amd64` and `linux/arm64` images with `latest`, Git tag, and immutable commit-SHA tags, plus provenance and an SBOM. Vercel remains the supported production host; the image is intended for local development and optional self-hosting.
+The publishing workflow creates both targets for `linux/amd64` and `linux/arm64` with provenance and an SBOM. Vercel remains the supported production host. GitHub Actions dispatch from local mode is optional and still needs a reachable HTTPS callback because hosted runners cannot reach localhost.
 
 ## Known Limitations and Next Work
 

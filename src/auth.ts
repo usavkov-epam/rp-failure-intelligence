@@ -1,4 +1,4 @@
-import NextAuth from "next-auth";
+import NextAuth, { type Session } from "next-auth";
 import GitHub from "next-auth/providers/github";
 
 import { config } from "@/lib/config";
@@ -115,6 +115,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 });
 
 export async function getAuthorizedSession() {
+  if (config.isLocal) {
+    return {
+      user: {
+        name: "Local developer",
+        githubLogin: "local",
+        githubUserId: "local",
+        authorizationContext: "local",
+      },
+      expires: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+    } satisfies Session;
+  }
   try {
     const session = await auth();
     return session?.user.authorizationContext ? session : null;

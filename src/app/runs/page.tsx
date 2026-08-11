@@ -16,14 +16,15 @@ export default async function RunsPage() {
   if (!session) redirect("/signin");
   const ownerKey = getUserOwnerKey(session);
   const { url, anonKey } = config.supabase;
-  if (!url || !anonKey) throw new Error("Supabase run history is not configured");
+  if (!config.isLocal && (!url || !anonKey)) throw new Error("Supabase run history is not configured");
 
   const [runs, dashboardSettings] = await Promise.all([listCypressRuns(ownerKey), getDashboardSettings(ownerKey)]);
   return <RunsView
     initialRuns={runs}
     channelName={getRunChannel(ownerKey)}
-    supabaseUrl={url}
-    supabaseAnonKey={anonKey}
+    supabaseUrl={url || ""}
+    supabaseAnonKey={anonKey || ""}
+    localMode={config.isLocal}
     userName={session.user.name || session.user.githubLogin || "User"}
     activeProject={(await cookies()).get(ACTIVE_PROJECT_COOKIE)?.value || dashboardSettings?.defaultProject}
   />;

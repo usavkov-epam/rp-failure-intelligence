@@ -36,7 +36,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
   const ownerKey = getUserOwnerKey(session);
   const dashboard = await getDashboardConnection(ownerKey);
   const userName = session.user.name || session.user.githubLogin || "User";
-  if (!dashboard?.settings.hasReportPortalApiKey) return <><AppHeader currentPage="analysis" userName={userName} /><main className="mx-auto max-w-3xl px-4 py-16"><Card><CardHeader><CardTitle>Connect ReportPortal to start</CardTitle><CardDescription>Analysis needs a user-specific ReportPortal API URL and key.</CardDescription></CardHeader><CardContent className="space-y-4"><Alert><CircleAlert /><AlertTitle>ReportPortal is not configured</AlertTitle><AlertDescription>Your credentials are saved securely for your account and are never exposed to the browser after saving.</AlertDescription></Alert><Button asChild><Link href="/settings"><Settings />Open integration settings</Link></Button></CardContent></Card></main></>;
+  if (!dashboard?.settings.hasReportPortalApiKey) return <><AppHeader currentPage="analysis" userName={userName} localMode={config.isLocal} /><main className="mx-auto max-w-3xl px-4 py-16"><Card><CardHeader><CardTitle>Connect ReportPortal to start</CardTitle><CardDescription>Analysis needs a user-specific ReportPortal API URL and key.</CardDescription></CardHeader><CardContent className="space-y-4"><Alert><CircleAlert /><AlertTitle>ReportPortal is not configured</AlertTitle><AlertDescription>Your credentials are saved encrypted and are never exposed to the browser after saving.</AlertDescription></Alert><Button asChild><Link href="/settings"><Settings />Open integration settings</Link></Button></CardContent></Card></main></>;
   const parameters = await searchParams;
   const activeProject = queryValue(parameters.project) || (await cookies()).get(ACTIVE_PROJECT_COOKIE)?.value || dashboard.settings.defaultProject;
   const sourceSelection = reportSelectionSchema.parse({
@@ -87,6 +87,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     reportFields={dashboard.settings.reportFields}
     cypressConfigFields={dashboard.settings.cypressConfigFields}
     suggestedProfileId={suggestedProfileId}
+    localMode={config.isLocal}
     user={{ name: userName }}
   />;
 }

@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import { config } from "./config";
 import { defaultCypressConfigFields, legacyReportFields } from "./configuration-mappings";
+import { readLocalStore, updateLocalStore, type LocalProfileRecord } from "./local-store";
 import type {
   CypressProfileInput,
   CypressProfileSecret,
@@ -108,7 +109,31 @@ function dashboardView(row: DashboardRow, secrets: DashboardSecrets): DashboardS
   };
 }
 
+function localDashboardView(input: DashboardSettingsInput): DashboardSettingsView {
+  return dashboardView({
+    owner_key: "local:developer",
+    reportportal_api_url: input.reportPortalApiUrl,
+    testrail_base_url: input.testRailBaseUrl || null,
+    default_project: input.defaultProject,
+    default_launch_name: input.defaultLaunchName,
+    default_team: input.reportFields[0]?.defaultValue || "",
+    default_history_depth: input.defaultHistoryDepth,
+    secret_id: "local",
+  }, {
+    reportPortalApiKey: input.reportPortalApiKey || "",
+    testRailApiUser: input.testRailApiUser,
+    testRailApiKey: input.testRailApiKey,
+    reportFields: input.reportFields,
+    cypressConfigFields: input.cypressConfigFields,
+    launchProfileMappings: input.launchProfileMappings,
+  });
+}
+
 export async function getDashboardSettings(ownerKey: string) {
+  if (config.isLocal) {
+    const dashboard = (await readLocalStore()).dashboard;
+    return dashboard?.ownerKey === ownerKey ? localDashboardView(dashboard.settings) : null;
+  }
   const { data, error } = await getClient().from("user_dashboard_settings").select("*").eq("owner_key", ownerKey).maybeSingle();
   if (error) throw new Error(`Unable to load dashboard settings: ${error.message}`);
   if (!data) return null;
@@ -117,6 +142,15 @@ export async function getDashboardSettings(ownerKey: string) {
 }
 
 export async function getDashboardConnection(ownerKey: string) {
+  if (config.isLocal) {
+    const dashboard = (await readLocalStore()).dashboard;
+    if (!dashboard || dashboard.ownerKey !== ownerKey) return null;
+    return {
+      settings: localDashboardView(dashboard.settings),
+      reportPortal: { apiUrl: dashboard.settings.reportPortalApiUrl.replace(/\/$/, ""), apiKey: dashboard.settings.reportPortalApiKey || "" },
+      testRailBaseUrl: dashboard.settings.testRailBaseUrl?.replace(/\/$/, ""),
+    };
+  }
   const { data, error } = await getClient().from("user_dashboard_settings").select("*").eq("owner_key", ownerKey).maybeSingle();
   if (error) throw new Error(`Unable to load dashboard settings: ${error.message}`);
   if (!data) return null;
@@ -130,6 +164,23 @@ export async function getDashboardConnection(ownerKey: string) {
 }
 
 export async function saveDashboardSettings(ownerKey: string, input: DashboardSettingsInput) {
+  if (config.isLocal) {
+    const settings = await updateLocalStore((store) => {
+      const previous = store.dashboard?.ownerKey === ownerKey ? store.dashboard.settings : undefined;
+      const merged: DashboardSettingsInput = {
+        ...input,
+        reportPortalApiUrl: input.reportPortalApiUrl.replace(/\/$/, ""),
+        testRailBaseUrl: input.testRailBaseUrl?.replace(/\/$/, "") || "",
+        reportPortalApiKey: input.reportPortalApiKey || previous?.reportPortalApiKey || "",
+        testRailApiKey: input.testRailApiKey || previous?.testRailApiKey,
+        testRailApiUser: input.testRailApiUser || previous?.testRailApiUser,
+      };
+      if (!merged.reportPortalApiKey) throw new Error("ReportPortal API key is required");
+      store.dashboard = { ownerKey, settings: merged };
+      return merged;
+    });
+    return localDashboardView(settings);
+  }
   const client = getClient();
   const { data: existingData, error: existingError } = await client.from("user_dashboard_settings")
     .select("*").eq("owner_key", ownerKey).maybeSingle();
@@ -221,6 +272,11 @@ function profileView(row: CypressProfileRow, stored: StoredCypressProfile): Cypr
 }
 
 export async function listCypressProfiles(ownerKey: string) {
+  if (config.isLocal) {
+    return (await readLocalStore()).profiles.filter((profile) => profile.ownerKey === ownerKey)
+      .sort((left, right) => Number(right.isDefault) - Number(left.isDefault) || left.name.localeCompare(right.name))
+      .map((profile) => profileView({ id: profile.id, owner_key: profile.ownerKey, name: profile.name, is_default: profile.isDefault, secret_id: "local" }, profile.environment));
+  }
   const { data, error } = await getClient().from("cypress_profiles").select("*").eq("owner_key", ownerKey)
     .order("is_default", { ascending: false }).order("name");
   if (error) throw new Error(`Unable to load Cypress profiles: ${error.message}`);
@@ -228,6 +284,12 @@ export async function listCypressProfiles(ownerKey: string) {
 }
 
 export async function getCypressProfileSecret(ownerKey: string, profileId: string) {
+  if (config.isLocal) {
+    const stored = (await readLocalStore()).profiles.find((profile) => profile.ownerKey === ownerKey && profile.id === profileId);
+    if (!stored) return null;
+    const row: CypressProfileRow = { id: stored.id, owner_key: stored.ownerKey, name: stored.name, is_default: stored.isDefault, secret_id: "local" };
+    return { row, profile: profileView(row, stored.environment), environment: stored.environment };
+  }
   const { data, error } = await getClient().from("cypress_profiles").select("*")
     .eq("owner_key", ownerKey).eq("id", profileId).maybeSingle();
   if (error) throw new Error(`Unable to load Cypress profile: ${error.message}`);
@@ -242,6 +304,25 @@ export async function getCypressProfileSecret(ownerKey: string, profileId: strin
 }
 
 export async function saveCypressProfile(ownerKey: string, input: CypressProfileInput, profileId?: string) {
+  if (config.isLocal) {
+    return updateLocalStore((store) => {
+      const existingIndex = profileId ? store.profiles.findIndex((item) => item.ownerKey === ownerKey && item.id === profileId) : -1;
+      if (profileId && existingIndex < 0) throw new Error("Cypress profile was not found");
+      const existing = existingIndex >= 0 ? store.profiles[existingIndex] : undefined;
+      const environment = toStoredProfile(input, existing?.environment);
+      if (input.isDefault) store.profiles.forEach((item) => { if (item.ownerKey === ownerKey) item.isDefault = false; });
+      const stored: LocalProfileRecord = {
+        id: existing?.id || crypto.randomUUID(),
+        ownerKey,
+        name: input.name,
+        isDefault: input.isDefault,
+        environment: { baseUrl: environment.baseUrl, env: environment.env, secretKeys: storedSecretKeys(environment) },
+      };
+      if (existingIndex >= 0) store.profiles[existingIndex] = stored;
+      else store.profiles.push(stored);
+      return profileView({ id: stored.id, owner_key: ownerKey, name: stored.name, is_default: stored.isDefault, secret_id: "local" }, stored.environment);
+    });
+  }
   const client = getClient();
   const existingResult = profileId
     ? await client.from("cypress_profiles").select("*").eq("owner_key", ownerKey).eq("id", profileId).maybeSingle()
@@ -267,6 +348,14 @@ export async function saveCypressProfile(ownerKey: string, input: CypressProfile
 }
 
 export async function removeCypressProfile(ownerKey: string, profileId: string) {
+  if (config.isLocal) {
+    return updateLocalStore((store) => {
+      const index = store.profiles.findIndex((profile) => profile.ownerKey === ownerKey && profile.id === profileId);
+      if (index < 0) return false;
+      store.profiles.splice(index, 1);
+      return true;
+    });
+  }
   const client = getClient();
   const { data, error } = await client.from("cypress_profiles").delete().eq("owner_key", ownerKey).eq("id", profileId).select("secret_id").maybeSingle();
   if (error) throw new Error(`Unable to delete Cypress profile: ${error.message}`);
@@ -276,6 +365,14 @@ export async function removeCypressProfile(ownerKey: string, profileId: string) 
 }
 
 export async function createRunProfileSnapshot(requestId: string, snapshot: RunProfileSnapshot) {
+  if (config.isLocal) {
+    await updateLocalStore((store) => {
+      const now = Date.now();
+      for (const [id, stored] of Object.entries(store.snapshots)) if (Date.parse(stored.expiresAt) <= now) delete store.snapshots[id];
+      store.snapshots[requestId] = { value: snapshot, expiresAt: new Date(now + 60 * 60 * 1000).toISOString() };
+    });
+    return;
+  }
   const { error: purgeError } = await getClient().rpc("purge_expired_cypress_run_profiles");
   if (purgeError) throw new Error(`Unable to purge expired Cypress profiles: ${purgeError.message}`);
   const secretId = await createSecret(snapshot, `run:${requestId}`, "Short-lived Cypress run profile");
@@ -288,6 +385,13 @@ export async function createRunProfileSnapshot(requestId: string, snapshot: RunP
 }
 
 export async function consumeRunProfileSnapshot(requestId: string) {
+  if (config.isLocal) {
+    return updateLocalStore((store) => {
+      const stored = store.snapshots[requestId];
+      delete store.snapshots[requestId];
+      return stored && Date.parse(stored.expiresAt) > Date.now() ? stored.value : null;
+    });
+  }
   const { data, error } = await getClient().rpc("consume_cypress_run_profile", { run_request_id: requestId });
   if (error) throw new Error(`Unable to load Cypress run profile: ${error.message}`);
   return typeof data === "string" ? JSON.parse(data) as RunProfileSnapshot : null;

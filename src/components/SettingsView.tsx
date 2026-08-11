@@ -77,11 +77,12 @@ function EditableSection({ title, description, addLabel, onAdd, children }: { ti
   return <section className="space-y-3"><div><h3 className="text-lg font-semibold">{title}</h3><p className="text-sm text-muted-foreground">{description}</p></div>{children}<Button variant="outline" size="sm" onClick={onAdd}><Plus />{addLabel}</Button></section>;
 }
 
-export default function SettingsView({ initialDashboardSettings, initialCypressProfiles, userName, activeProject }: {
+export default function SettingsView({ initialDashboardSettings, initialCypressProfiles, userName, activeProject, localMode }: {
   initialDashboardSettings: DashboardSettingsView | null;
   initialCypressProfiles: CypressProfileView[];
   userName: string;
   activeProject?: string;
+  localMode?: boolean;
 }) {
   const [dashboard, setDashboard] = useState<DashboardSettingsInput>(() => dashboardSettingsFormValue(initialDashboardSettings, emptyDashboard));
   const [profiles, setProfiles] = useState(initialCypressProfiles);
@@ -179,7 +180,7 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
 
   return (
     <>
-      <AppHeader currentPage="settings" userName={userName} activeProject={hasReportPortalKey ? activeProject : undefined} />
+      <AppHeader currentPage="settings" userName={userName} activeProject={hasReportPortalKey ? activeProject : undefined} localMode={localMode} />
       <main className="mx-auto max-w-6xl px-4 py-8 lg:px-6">
         <div className="mb-6"><h1 className="text-4xl font-semibold tracking-tight">Settings</h1><p className="mt-2 text-muted-foreground">Integrations, global ReportPortal context, configurable fields, and reusable Cypress profiles.</p></div>
         {error && <Alert variant="destructive" className="mb-4"><CircleAlert /><AlertTitle>Unable to save</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
@@ -188,7 +189,7 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
           <TabsList className="mb-4"><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="configuration">Configuration & mappings</TabsTrigger><TabsTrigger value="profiles">Cypress profiles</TabsTrigger></TabsList>
 
           <TabsContent value="integrations">
-            <Card><CardHeader><CardTitle>Integrations</CardTitle><CardDescription>Credentials are scoped to your account and encrypted in Supabase Vault.</CardDescription></CardHeader><CardContent className="space-y-6">
+            <Card><CardHeader><CardTitle>Integrations</CardTitle><CardDescription>{localMode ? "Credentials are encrypted at rest in the persistent local Docker volume." : "Credentials are scoped to your account and encrypted in Supabase Vault."}</CardDescription></CardHeader><CardContent className="space-y-6">
               <section className="space-y-4"><div><h3 className="text-lg font-semibold">ReportPortal</h3></div>
                 <Field label="ReportPortal API URL"><Input value={dashboard.reportPortalApiUrl} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiUrl: event.target.value })} /></Field>
                 <StoredSecretField label="ReportPortal API key" configured={hasReportPortalKey} editing={changingReportPortalKey} value={dashboard.reportPortalApiKey || ""} onEditingChange={setChangingReportPortalKey} onChange={(reportPortalApiKey) => setDashboard({ ...dashboard, reportPortalApiKey })} />

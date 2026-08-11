@@ -38,6 +38,11 @@ export async function POST(request: Request) {
   const ownerKey = getUserOwnerKey(session);
   const configuration = (await import("@/lib/config")).config;
   const { owner, repository, workflow } = configuration.githubActions;
+  if (configuration.isLocal && !configuration.githubActions.token) {
+    return NextResponse.json({
+      error: "GitHub Actions is optional in local mode and is not configured. Analysis, settings, and Cypress profiles remain available.",
+    }, { status: 409 });
+  }
   const actionsUrl = `https://github.com/${owner}/${repository}/actions/workflows/${workflow}`;
   try {
     const [selectedProfile, dashboardSettings] = await Promise.all([

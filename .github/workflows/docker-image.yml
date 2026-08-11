@@ -33,7 +33,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - id: metadata
+      - id: production-metadata
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
@@ -42,13 +42,38 @@ jobs:
             type=sha,prefix=sha-
             type=ref,event=tag
 
-      - uses: docker/build-push-action@v6
+      - name: Publish production image
+        uses: docker/build-push-action@v6
         with:
           context: .
+          target: production
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
+          tags: ${{ steps.production-metadata.outputs.tags }}
+          labels: ${{ steps.production-metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - id: local-metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=local,enable={{is_default_branch}}
+            type=sha,prefix=local-sha-
+            type=ref,event=tag,prefix=local-
+
+      - name: Publish self-contained local image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: local
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.local-metadata.outputs.tags }}
+          labels: ${{ steps.local-metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: mode=max

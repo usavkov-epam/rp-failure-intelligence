@@ -34,13 +34,14 @@ function statusVariant(run: CypressRunRecord): "outline" | "secondary" | "defaul
   return run.conclusion === "success" ? "default" : "destructive";
 }
 
-export default function RunsView({ initialRuns, channelName, supabaseUrl, supabaseAnonKey, userName, activeProject }: {
+export default function RunsView({ initialRuns, channelName, supabaseUrl, supabaseAnonKey, userName, activeProject, localMode }: {
   initialRuns: CypressRunRecord[];
   channelName: string;
   supabaseUrl: string;
   supabaseAnonKey: string;
   userName: string;
   activeProject?: string;
+  localMode?: boolean;
 }) {
   const [runs, setRuns] = useState(initialRuns);
   const [statusError, setStatusError] = useState("");
@@ -50,7 +51,6 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
   const [detailsError, setDetailsError] = useState("");
 
   useEffect(() => {
-    const supabase = getSupabaseBrowserClient(supabaseUrl, supabaseAnonKey);
     let active = true;
     const refresh = async (notifyRequestId?: string) => {
       try {
@@ -66,6 +66,11 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
         if (active) setStatusError(error instanceof Error ? error.message : "Unable to load Cypress runs");
       }
     };
+    if (!supabaseUrl || !supabaseAnonKey) {
+      const timer = window.setInterval(() => void refresh(), 5000);
+      return () => { active = false; window.clearInterval(timer); };
+    }
+    const supabase = getSupabaseBrowserClient(supabaseUrl, supabaseAnonKey);
     const channel = supabase.channel(channelName)
       .on("broadcast", { event: "cypress_run_changed" }, ({ payload }) => void refresh(typeof payload?.requestId === "string" ? payload.requestId : undefined))
       .subscribe((status) => {
@@ -94,7 +99,7 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
 
   return (
     <>
-      <AppHeader currentPage="runs" userName={userName} activeProject={activeProject} />
+      <AppHeader currentPage="runs" userName={userName} activeProject={activeProject} localMode={localMode} />
       <main className="pb-16">
         <section className="border-b bg-gradient-to-br from-muted/70 via-background to-destructive/5">
           <div className="mx-auto max-w-[1800px] px-4 py-10 lg:px-6">
@@ -105,6 +110,7 @@ export default function RunsView({ initialRuns, channelName, supabaseUrl, supaba
         </section>
         <div className="mx-auto max-w-[1800px] space-y-4 px-4 py-6 lg:px-6">
           {statusError && <Alert><CircleAlert /><AlertTitle>Status updates delayed</AlertTitle><AlertDescription>{statusError}</AlertDescription></Alert>}
+          {localMode && <Alert><CircleAlert /><AlertTitle>Local workspace</AlertTitle><AlertDescription>Settings, profiles, and run history are stored in the encrypted Docker volume. GitHub Actions execution is optional and requires hosted callback configuration.</AlertDescription></Alert>}
           {!runs.length ? (
             <Card className="py-10 text-center"><CardHeader><CardTitle>No Cypress runs</CardTitle><CardDescription>Select failures on the Analysis page and start a run.</CardDescription></CardHeader></Card>
           ) : (

@@ -42,7 +42,7 @@ function Distribution({ data }: { data: DashboardData }) {
 
 function FormField({ label, className = "", children }: { label: string; className?: string; children: React.ReactNode }) { return <div className={`min-w-0 space-y-1.5 ${className}`}><Label>{label}</Label>{children}</div>; }
 
-export default function Dashboard({ initialData, reportSelection, reportSourceOptions, sourceRepository, cypressProfiles, reportFields, cypressConfigFields, suggestedProfileId, user }: {
+export default function Dashboard({ initialData, reportSelection, reportSourceOptions, sourceRepository, cypressProfiles, reportFields, cypressConfigFields, suggestedProfileId, user, localMode }: {
   initialData: DashboardData;
   reportSelection: ReportSelection;
   reportSourceOptions: ReportSourceOptions;
@@ -52,6 +52,7 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
   cypressConfigFields: CypressConfigField[];
   suggestedProfileId: string;
   user: { name: string };
+  localMode?: boolean;
 }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -108,7 +109,7 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
   const setCypressConfig = (key: string, value: string | number | boolean | undefined) => setRunOptions((current) => { const cypressConfig = { ...current.cypressConfig }; if (value === undefined) delete cypressConfig[key]; else cypressConfig[key] = value; return { ...current, cypressConfig }; });
 
   return <>
-    <AppHeader currentPage="analysis" userName={user.name} sourceStatus={initialData.meta.source} activeProject={initialData.meta.project} projectOptions={reportSourceOptions.projects} />
+    <AppHeader currentPage="analysis" userName={user.name} sourceStatus={initialData.meta.source} activeProject={initialData.meta.project} projectOptions={reportSourceOptions.projects} localMode={localMode} />
     <main className="pb-16">
       <div className="mx-auto max-w-[1600px] space-y-6 px-4 py-8 lg:px-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between"><div className="min-w-0"><p className="text-sm text-muted-foreground">Project / {initialData.meta.project}</p><h1 className="mt-1 max-w-5xl break-words text-2xl font-bold tracking-tight md:text-3xl">{initialData.meta.launchName}</h1></div><div className="flex max-w-xl flex-wrap gap-2 md:justify-end">{initialData.meta.launchNumber !== null && <Badge>Launch #{initialData.meta.launchNumber}</Badge>}{initialData.meta.launchId !== null && <Badge variant="outline">ID {initialData.meta.launchId}</Badge>}<Badge variant={initialData.meta.launchStatus === "PASSED" ? "secondary" : "destructive"}>{initialData.meta.launchStatus}</Badge><Badge variant="outline">{initialData.meta.historyDepth}-run history</Badge>{initialData.meta.fields.filter(({ value }) => value).map(({ key, label, value }) => <Badge key={key} variant="outline">{label}: {value}</Badge>)}</div></div>

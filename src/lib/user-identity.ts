@@ -1,6 +1,7 @@
 import type { Session } from "next-auth";
 
 export function getUserOwnerKey(session: Session) {
+  if (session.user.authorizationContext === "local") return "local:developer";
   if (!session.user.githubUserId) {
     throw new Error("Your session predates user configuration support. Sign out and sign in again.");
   }

@@ -16,12 +16,13 @@ const navigation = [
   { id: "settings", href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
-export default function AppHeader({ currentPage, userName, sourceStatus, activeProject, projectOptions }: {
+export default function AppHeader({ currentPage, userName, sourceStatus, activeProject, projectOptions, localMode }: {
   currentPage: "analysis" | "runs" | "settings";
   userName: string;
   sourceStatus?: "live" | "error";
   activeProject?: string;
   projectOptions?: string[];
+  localMode?: boolean;
 }) {
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -42,9 +43,12 @@ export default function AppHeader({ currentPage, userName, sourceStatus, activeP
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {sourceStatus && <Badge variant={sourceStatus === "live" ? "secondary" : "destructive"}>{sourceStatus === "live" ? "Live data" : "Load error"}</Badge>}
+          {localMode && <Badge variant="outline">Local</Badge>}
           <ModeToggle />
           <Button variant="ghost" size="sm" onClick={() => location.reload()}><RefreshCw data-icon="inline-start" /><span className="hidden sm:inline">Refresh</span></Button>
-          <Button variant="ghost" size="sm" onClick={() => signOut({ redirectTo: "/signin" })}><LogOut data-icon="inline-start" /><span className="max-w-36 truncate">{userName}</span></Button>
+          {localMode
+            ? <Badge variant="secondary" className="max-w-40 truncate">{userName}</Badge>
+            : <Button variant="ghost" size="sm" onClick={() => signOut({ redirectTo: "/signin" })}><LogOut data-icon="inline-start" /><span className="max-w-36 truncate">{userName}</span></Button>}
         </div>
       </div>
     </header>

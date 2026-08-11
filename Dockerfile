@@ -27,7 +27,7 @@ ENV AUTHORIZATION_MODE=users
 ENV AUTH_ALLOWED_USERS=container-image-builder
 RUN pnpm build
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime-base
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV HOSTNAME=0.0.0.0
@@ -38,9 +38,20 @@ COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 
-USER node
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:8080/signin').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:8080/signin',{redirect:'manual'}).then(r=>{if(r.status>=500)process.exit(1)}).catch(()=>process.exit(1))"]
 
+FROM runtime-base AS local
+ENV APP_MODE=local
+ENV LOCAL_DATA_DIR=/data
+COPY --chown=node:node docker/local-entrypoint.sh /usr/local/bin/local-entrypoint
+RUN mkdir -p /data && chown node:node /data && chmod 755 /usr/local/bin/local-entrypoint
+VOLUME ["/data"]
+USER node
+ENTRYPOINT ["local-entrypoint"]
+CMD ["node", "server.js"]
+
+FROM runtime-base AS production
+USER node
 CMD ["node", "server.js"]

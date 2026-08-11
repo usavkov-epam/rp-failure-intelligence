@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getAuthorizedSession } from "@/auth";
 import SettingsView from "@/components/SettingsView";
 import { ACTIVE_PROJECT_COOKIE } from "@/lib/active-project";
+import { config } from "@/lib/config";
 import { getUserOwnerKey } from "@/lib/user-identity";
 import { getDashboardSettings, listCypressProfiles } from "@/lib/user-settings";
 
@@ -28,5 +29,6 @@ export default async function SettingsPage() {
     initialCypressProfiles={cypressProfiles}
     userName={session.user.name || session.user.githubLogin || "User"}
     activeProject={activeProject}
+    localMode={config.isLocal}
   />;
 }

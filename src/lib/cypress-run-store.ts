@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 import { config } from "./config";
+import { readLocalStore, updateLocalStore, type LocalRunRecord } from "./local-store";
 import type { CypressRunRequest } from "./cypress-run-request";
 import type { CypressRunRecord, CypressRunState } from "./types";
 
@@ -81,6 +82,33 @@ export async function createCypressRun(
   actionsUrl: string,
   profile: { id: string; name: string },
 ) {
+  if (config.isLocal) {
+    return updateLocalStore((store) => {
+      const now = new Date().toISOString();
+      const run: LocalRunRecord = {
+        requestId,
+        ownerKey,
+        requestedBy,
+        actionsUrl,
+        specs: request.specs,
+        runs: request.runs,
+        threads: request.threads,
+        browser: request.browser,
+        timeoutSeconds: request.timeoutSeconds,
+        environment: profile.name,
+        cypressConfig: request.cypressConfig,
+        requestedAt: now,
+        status: "queued",
+        conclusion: null,
+        updatedAt: now,
+        artifactCount: 0,
+        artifactNames: [],
+      };
+      store.runs.unshift(run);
+      store.runs = store.runs.slice(0, 100);
+      return run;
+    });
+  }
   const { data, error } = await getClient().from("cypress_runs").insert({
     request_id: requestId,
     owner_key: ownerKey,
@@ -102,6 +130,7 @@ export async function createCypressRun(
 }
 
 export async function listCypressRuns(ownerKey: string) {
+  if (config.isLocal) return (await readLocalStore()).runs.filter((run) => run.ownerKey === ownerKey).slice(0, 20);
   const { data, error } = await getClient()
     .from("cypress_runs")
     .select("*")
@@ -114,6 +143,7 @@ export async function listCypressRuns(ownerKey: string) {
 }
 
 export async function getCypressRun(ownerKey: string, requestId: string) {
+  if (config.isLocal) return (await readLocalStore()).runs.find((run) => run.ownerKey === ownerKey && run.requestId === requestId) || null;
   const { data, error } = await getClient().from("cypress_runs").select("*")
     .eq("owner_key", ownerKey).eq("request_id", requestId).maybeSingle();
   if (error) throw new Error(`Unable to load Cypress run: ${error.message}`);
@@ -121,6 +151,16 @@ export async function getCypressRun(ownerKey: string, requestId: string) {
 }
 
 export async function failCypressRunDispatch(requestId: string) {
+  if (config.isLocal) {
+    await updateLocalStore((store) => {
+      const run = store.runs.find((item) => item.requestId === requestId);
+      if (!run) return;
+      run.status = "completed";
+      run.conclusion = "dispatch_failure";
+      run.updatedAt = new Date().toISOString();
+    });
+    return;
+  }
   const { error } = await getClient().from("cypress_runs").update({
     status: "completed",
     conclusion: "dispatch_failure",
@@ -141,6 +181,22 @@ export async function updateCypressRun(requestId: string, update: {
   completedAt: string | null;
   artifactNames: string[];
 }) {
+  if (config.isLocal) {
+    return updateLocalStore((store) => {
+      const run = store.runs.find((item) => item.requestId === requestId);
+      if (!run) return undefined;
+      run.status = update.status;
+      run.conclusion = update.conclusion;
+      run.runId = update.githubRunId;
+      run.runNumber = update.githubRunNumber;
+      run.actionsUrl = update.actionsUrl;
+      run.startedAt = update.startedAt;
+      run.updatedAt = update.completedAt || new Date().toISOString();
+      run.artifactNames = update.artifactNames;
+      run.artifactCount = update.artifactNames.length;
+      return run.ownerKey;
+    });
+  }
   const { data, error } = await getClient().from("cypress_runs").update({
     status: update.status,
     conclusion: update.conclusion,
@@ -158,6 +214,7 @@ export async function updateCypressRun(requestId: string, update: {
 }
 
 export async function broadcastRunChange(ownerKey: string, requestId: string) {
+  if (config.isLocal) return;
   const { url, serviceRoleKey } = getSupabaseConfig();
   const response = await fetch(`${url}/realtime/v1/api/broadcast`, {
     method: "POST",

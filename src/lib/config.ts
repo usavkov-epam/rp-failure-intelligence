@@ -9,10 +9,11 @@ const commaSeparatedList = z.string().default("").transform((value) => (
 ));
 
 const environmentSchema = z.object({
+  APP_MODE: z.enum(["hosted", "local"]).default("hosted"),
   APP_NAME: z.string().min(1).default("Failure intelligence"),
-  AUTH_SECRET: z.string().min(1),
-  AUTH_GITHUB_ID: z.string().min(1),
-  AUTH_GITHUB_SECRET: z.string().min(1),
+  AUTH_SECRET: z.string().min(1).optional(),
+  AUTH_GITHUB_ID: z.string().min(1).optional(),
+  AUTH_GITHUB_SECRET: z.string().min(1).optional(),
   AUTHORIZATION_MODE: z.enum(["organization", "users"]).default("organization"),
   AUTH_ALLOWED_ORGS: commaSeparatedList,
   AUTH_ALLOWED_USERS: commaSeparatedList,
@@ -28,9 +29,19 @@ const environmentSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: optionalUrl,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  LOCAL_DATA_DIR: z.string().min(1).default(".failure-intelligence"),
+  LOCAL_ENCRYPTION_KEY: z.string().min(32).optional(),
 }).superRefine((env, context) => {
+  if (env.APP_MODE === "hosted") {
+    for (const key of ["AUTH_SECRET", "AUTH_GITHUB_ID", "AUTH_GITHUB_SECRET"] as const) {
+      if (!env[key]) context.addIssue({ code: "custom", path: [key], message: `${key} is required in hosted mode` });
+    }
+  }
+  if (env.APP_MODE === "local" && !env.LOCAL_ENCRYPTION_KEY) {
+    context.addIssue({ code: "custom", path: ["LOCAL_ENCRYPTION_KEY"], message: "LOCAL_ENCRYPTION_KEY is required in local mode" });
+  }
   const allowlist = env.AUTHORIZATION_MODE === "organization" ? env.AUTH_ALLOWED_ORGS : env.AUTH_ALLOWED_USERS;
-  if (!allowlist.length) {
+  if (env.APP_MODE === "hosted" && !allowlist.length) {
     context.addIssue({
       code: "custom",
       path: [env.AUTHORIZATION_MODE === "organization" ? "AUTH_ALLOWED_ORGS" : "AUTH_ALLOWED_USERS"],
@@ -56,9 +67,11 @@ if (!parsed.success) {
 const env = parsed.data;
 
 export const config = {
+  mode: env.APP_MODE,
+  isLocal: env.APP_MODE === "local",
   appName: env.APP_NAME,
   auth: {
-    notificationSecret: env.AUTH_SECRET,
+    notificationSecret: env.AUTH_SECRET || env.LOCAL_ENCRYPTION_KEY || "",
     authorizationMode: env.AUTHORIZATION_MODE,
     allowedOrganizations: env.AUTH_ALLOWED_ORGS,
     allowedUsers: env.AUTH_ALLOWED_USERS,
@@ -82,5 +95,9 @@ export const config = {
     url: env.NEXT_PUBLIC_SUPABASE_URL,
     anonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
+  },
+  localStorage: {
+    dataDirectory: env.LOCAL_DATA_DIR,
+    encryptionKey: env.LOCAL_ENCRYPTION_KEY,
   },
 } as const;
