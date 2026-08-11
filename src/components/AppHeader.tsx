@@ -7,6 +7,7 @@ import { BarChart3, CirclePlay, FolderKanban, LogOut, RefreshCw, Settings } from
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import ModeToggle from "./ModeToggle";
 
 const navigation = [
   { id: "analysis", href: "/", label: "Analysis", icon: BarChart3 },
@@ -21,16 +22,16 @@ export default function AppHeader({ currentPage, userName, sourceStatus, activeP
   activeProject?: string;
 }) {
   return (
-    <header className="sticky top-0 z-40 border-b bg-background/90 shadow-[0_1px_0_rgb(0_0_0/0.02)] backdrop-blur-xl">
-      <div className="mx-auto flex min-h-16 max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-2 lg:px-8">
-        <div className="flex flex-wrap items-center gap-4">
+    <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <div className="mx-auto flex h-16 max-w-[1600px] items-center justify-between gap-4 px-4 lg:px-8">
+        <div className="flex min-w-0 items-center gap-6">
           <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid size-9 place-items-center rounded-xl bg-primary text-xs font-black text-primary-foreground shadow-sm">RP</span>
-            <span className="hidden text-[15px] sm:inline">Failure intelligence</span>
+            <span className="grid size-8 place-items-center rounded-md bg-primary text-xs font-bold text-primary-foreground">RP</span>
+            <span className="hidden whitespace-nowrap sm:inline">Failure intelligence</span>
           </Link>
-          <nav className="flex items-center gap-1 rounded-xl bg-muted/70 p-1" aria-label="Primary navigation">
+          <nav className="hidden items-center gap-1 sm:flex" aria-label="Primary navigation">
             {navigation.map(({ id, href, label, icon: Icon }) => (
-              <Button key={id} asChild variant={currentPage === id ? "outline" : "ghost"} size="sm" className={cn("rounded-lg", currentPage === id && "bg-background shadow-sm")}>
+              <Button key={id} asChild variant={currentPage === id ? "secondary" : "ghost"} size="sm">
                 <Link href={href} className={cn(currentPage === id && "font-semibold")}><Icon data-icon="inline-start" />{label}</Link>
               </Button>
             ))}
@@ -41,8 +42,9 @@ export default function AppHeader({ currentPage, userName, sourceStatus, activeP
             </Badge>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {sourceStatus && <Badge variant={sourceStatus === "live" ? "secondary" : "destructive"}>{sourceStatus === "live" ? "Live data" : "Load error"}</Badge>}
+          <ModeToggle />
           <Button variant="ghost" size="sm" onClick={() => location.reload()}><RefreshCw data-icon="inline-start" /><span className="hidden sm:inline">Refresh</span></Button>
           <Button variant="ghost" size="sm" onClick={() => signOut({ redirectTo: "/signin" })}><LogOut data-icon="inline-start" /><span className="max-w-36 truncate">{userName}</span></Button>
         </div>
