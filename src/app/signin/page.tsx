@@ -1,6 +1,9 @@
-import { Box, Button, Paper, Stack, Typography } from "@mui/material";
+import { redirect } from "next/navigation";
 
-import { signIn } from "@/auth";
+import { getAuthorizedSession, signIn } from "@/auth";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { config } from "@/lib/config";
 
 const errorMessages: Record<string, string> = {
@@ -8,30 +11,24 @@ const errorMessages: Record<string, string> = {
   Configuration: "GitHub OAuth is not configured correctly. Contact the application administrator.",
 };
 
-export default async function SignInPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string }>;
-}) {
+export default async function SignInPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  if (await getAuthorizedSession()) redirect("/");
   const { error } = await searchParams;
   return (
-    <Box component="main" sx={{ minHeight: "100vh", display: "grid", placeItems: "center", bgcolor: "#f3f1eb", p: 2 }}>
-      <Paper variant="outlined" sx={{ width: "100%", maxWidth: 440, p: { xs: 3, sm: 5 } }}>
-        <Stack spacing={2.5}>
-          <Box sx={{ width: 40, height: 40, bgcolor: "#b44a35", display: "grid", placeItems: "center", color: "white", fontWeight: 900 }}>FI</Box>
-          <Box>
-            <Typography variant="h4" component="h1" sx={{ fontFamily: 'Georgia, "Times New Roman", serif' }}>{config.appName}</Typography>
-            <Typography color="text.secondary" sx={{ mt: 1 }}>Sign in with an authorized GitHub account.</Typography>
-          </Box>
-          {error && <Typography color="error">{errorMessages[error] || "GitHub sign-in failed. Please try again."}</Typography>}
-          <form action={async () => {
-            "use server";
-            await signIn("github", { redirectTo: "/" });
-          }}>
-            <Button type="submit" variant="contained" fullWidth sx={{ bgcolor: "#175b52" }}>Continue with GitHub</Button>
+    <main className="grid min-h-svh place-items-center bg-muted/30 p-6">
+      <Card className="w-full max-w-md shadow-sm">
+        <CardHeader className="text-center">
+          <div className="mx-auto mb-3 grid size-12 place-items-center rounded-xl bg-primary font-black text-primary-foreground">FI</div>
+          <CardTitle className="text-2xl">{config.appName}</CardTitle>
+          <CardDescription>Sign in with an authorized GitHub account.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {error && <Alert variant="destructive" className="mb-4"><AlertDescription>{errorMessages[error] || "GitHub sign-in failed. Please try again."}</AlertDescription></Alert>}
+          <form action={async () => { "use server"; await signIn("github", { redirectTo: "/" }); }}>
+            <Button type="submit" size="lg" className="w-full">Continue with GitHub</Button>
           </form>
-        </Stack>
-      </Paper>
-    </Box>
+        </CardContent>
+      </Card>
+    </main>
   );
 }

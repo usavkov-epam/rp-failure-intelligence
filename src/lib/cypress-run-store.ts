@@ -17,7 +17,7 @@ interface CypressRunRow {
   browser: string;
   timeout_seconds: number;
   environment: string | null;
-  cypress_config: Record<string, number | boolean>;
+  cypress_config: Record<string, string | number | boolean>;
   status: CypressRunState;
   conclusion: string | null;
   github_run_id: number | null;
@@ -111,6 +111,13 @@ export async function listCypressRuns(ownerKey: string) {
 
   if (error) throw new Error(`Unable to load Cypress runs: ${error.message}`);
   return (data as CypressRunRow[]).map(toRecord);
+}
+
+export async function getCypressRun(ownerKey: string, requestId: string) {
+  const { data, error } = await getClient().from("cypress_runs").select("*")
+    .eq("owner_key", ownerKey).eq("request_id", requestId).maybeSingle();
+  if (error) throw new Error(`Unable to load Cypress run: ${error.message}`);
+  return data ? toRecord(data as CypressRunRow) : null;
 }
 
 export async function failCypressRunDispatch(requestId: string) {

@@ -1,174 +1,45 @@
 "use client";
 
-import { useDeferredValue, useEffect, useRef, useState } from "react";
-import {
-  Alert,
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  Container,
-  CssBaseline,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  FormControl,
-  IconButton,
-  InputLabel,
-  Link,
-  MenuItem,
-  Paper,
-  Select,
-  Snackbar,
-  Stack,
-  TextField,
-  ThemeProvider,
-  Tooltip,
-  Typography,
-} from "@mui/material";
-import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
-import LaunchRounded from "@mui/icons-material/LaunchRounded";
-import PlayArrowRounded from "@mui/icons-material/PlayArrowRounded";
-import ScienceRounded from "@mui/icons-material/ScienceRounded";
-import ExpandMoreRounded from "@mui/icons-material/ExpandMoreRounded";
-import { DataGrid, type GridColDef, type GridRowSelectionModel } from "@mui/x-data-grid";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { CircleAlert, Clipboard, Loader2, Play, Settings2 } from "lucide-react";
+import { toast } from "sonner";
+
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { CypressConfigOverrides } from "@/lib/cypress-run-request";
-import type { DashboardData, FailureRow, ReportSelection, ReportSourceOptions, Risk } from "@/lib/types";
+import type { DashboardData, ReportSelection, ReportSourceOptions, Risk } from "@/lib/types";
 import type { CypressConfigField, ReportFieldMapping } from "@/lib/user-settings-schema";
 import AppHeader from "./AppHeader";
-import { appTheme } from "./app-theme";
+import FailureTable from "./FailureTable";
 
-const riskColors: Record<Risk, "error" | "warning" | "info" | "success"> = {
-  Persistent: "error",
-  "High risk": "warning",
-  Intermittent: "info",
-  Isolated: "success",
-};
-
-interface ReportSourceChildrenResponse {
-  launchName?: string;
-  launches: string[];
-  launchRuns: ReportSourceOptions["launchRuns"];
-  error?: string;
-}
-
-interface CypressRunFormOptions {
-  runs: number;
-  threads: number;
-  browser: "chrome" | "electron";
-  timeoutSeconds: number;
-  profileId: string;
-  cypressConfig: CypressConfigOverrides;
-}
+interface ReportSourceChildrenResponse { launchName?: string; launches: string[]; launchRuns: ReportSourceOptions["launchRuns"]; error?: string }
+interface CypressRunFormOptions { runs: number; threads: number; browser: "chrome" | "electron"; timeoutSeconds: number; profileId: string; cypressConfig: CypressConfigOverrides }
+const risks: Risk[] = ["Persistent", "High risk", "Intermittent", "Isolated"];
 
 function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <Paper variant="outlined" sx={{ p: 2.25, minHeight: 122 }}>
-      <Typography variant="overline" color="text.secondary">{label}</Typography>
-      <Typography variant="h2" sx={{ my: 0.5, fontSize: 34 }}>{value}</Typography>
-      <Typography variant="caption" color="text.secondary">{detail}</Typography>
-    </Paper>
-  );
-}
-
-function RecentRuns({ row }: { row: FailureRow }) {
-  return (
-    <Box
-      role="img"
-      aria-label={`Run history, oldest to newest: ${row.statuses.join(", ")}`}
-      sx={{ display: "flex", alignItems: "center", gap: "3px", width: "100%", height: 30 }}
-    >
-      {row.statuses.map((status, index) => {
-        const launchNumber = row.launchNumbers[index];
-        const isLatest = index === row.statuses.length - 1;
-        const color = status === "PASSED"
-          ? "primary.main"
-          : status === "FAILED"
-            ? "secondary.main"
-            : "action.disabled";
-
-        return (
-          <Tooltip
-            key={`${launchNumber}:${index}`}
-            title={`${launchNumber ? `Launch #${launchNumber}` : `Run ${index + 1}`}: ${status.toLowerCase()}`}
-          >
-            <Box
-              component="span"
-              sx={{
-                flex: "1 1 0",
-                minWidth: 4,
-                maxWidth: 16,
-                height: 24,
-                bgcolor: color,
-                borderRadius: "2px",
-                outline: isLatest ? "2px solid" : "none",
-                outlineColor: isLatest ? "text.primary" : "transparent",
-                outlineOffset: 1,
-              }}
-            />
-          </Tooltip>
-        );
-      })}
-    </Box>
-  );
+  return <Card className="py-4"><CardContent><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></CardContent></Card>;
 }
 
 function Trend({ data }: { data: DashboardData }) {
-  const launchLabel = data.meta.launchNumber === null ? "the selected launch" : `launch #${data.meta.launchNumber}`;
-  return (
-    <Paper variant="outlined" sx={{ p: 2.25, minWidth: 0 }}>
-      <Typography variant="h6">Current failure cohort</Typography>
-      <Typography variant="caption" color="text.secondary">
-        Status history for the tests failing in {launchLabel}, not the whole suite.
-      </Typography>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "flex-end", height: 180, mt: 2, overflowX: "auto" }}>
-        {!data.trend.length && <Typography color="text.secondary">No live history is available.</Typography>}
-        {data.trend.map((point) => {
-          const total = point.passed + point.failed + point.other;
-          return (
-            <Stack key={point.launchNumber} sx={{ alignItems: "center", minWidth: 38, height: "100%", justifyContent: "flex-end" }}>
-              <Tooltip title={`${point.failed} failed, ${point.passed} passed`}>
-                <Box sx={{ display: "flex", flexDirection: "column-reverse", width: 28, height: 132, bgcolor: "#e7e3d9" }}>
-                  <Box sx={{ height: `${(point.failed / total) * 100}%`, bgcolor: "secondary.main" }} />
-                  <Box sx={{ height: `${(point.passed / total) * 100}%`, bgcolor: "primary.main" }} />
-                </Box>
-              </Tooltip>
-              <Typography variant="caption" sx={{ mt: 0.75 }}>#{point.launchNumber}</Typography>
-            </Stack>
-          );
-        })}
-      </Stack>
-    </Paper>
-  );
+  return <Card><CardHeader><CardTitle>Current failure cohort</CardTitle><CardDescription>Status history for tests failing in {data.meta.launchNumber === null ? "the selected launch" : `launch #${data.meta.launchNumber}`}.</CardDescription></CardHeader><CardContent><div className="flex h-44 items-end gap-3 overflow-x-auto">{!data.trend.length && <p className="self-center text-sm text-muted-foreground">No live history is available.</p>}{data.trend.map((point) => { const total = point.passed + point.failed + point.other || 1; return <div key={point.launchNumber} className="flex h-full min-w-9 flex-col items-center justify-end"><div className="flex h-32 w-7 flex-col-reverse overflow-hidden rounded-sm bg-muted" title={`${point.failed} failed, ${point.passed} passed`}><span className="bg-destructive" style={{ height: `${point.failed / total * 100}%` }} /><span className="bg-emerald-600" style={{ height: `${point.passed / total * 100}%` }} /></div><span className="mt-2 text-xs">#{point.launchNumber}</span></div>; })}</div></CardContent></Card>;
 }
 
 function Distribution({ data }: { data: DashboardData }) {
-  const groups = [
-    ["Persistent", data.metrics.persistent, "#b44a35"],
-    ["High risk", data.metrics.highRisk, "#c5822a"],
-    ["Intermittent", data.metrics.intermittent, "#39778d"],
-    ["Isolated", data.metrics.isolated, "#28745a"],
-  ] as const;
+  const groups = [["Persistent", data.metrics.persistent, "bg-destructive"], ["High risk", data.metrics.highRisk, "bg-amber-600"], ["Intermittent", data.metrics.intermittent, "bg-sky-600"], ["Isolated", data.metrics.isolated, "bg-emerald-600"]] as const;
   const maximum = Math.max(1, ...groups.map(([, count]) => count));
-  return (
-    <Paper variant="outlined" sx={{ p: 2.25 }}>
-      <Typography variant="h6">Risk distribution</Typography>
-      <Typography variant="caption" color="text.secondary">Based on failure frequency across returned history.</Typography>
-      <Stack spacing={2} sx={{ mt: 3 }}>
-        {groups.map(([label, count, color]) => (
-          <Box key={label}>
-            <Stack direction="row" sx={{ justifyContent: "space-between" }}><Typography variant="body2">{label}</Typography><strong>{count}</strong></Stack>
-            <Box sx={{ height: 9, bgcolor: "#e7e3d9", mt: 0.75 }}><Box sx={{ width: `${(count / maximum) * 100}%`, height: "100%", bgcolor: color }} /></Box>
-          </Box>
-        ))}
-      </Stack>
-    </Paper>
-  );
+  return <Card><CardHeader><CardTitle>Risk distribution</CardTitle><CardDescription>Failure frequency across returned history.</CardDescription></CardHeader><CardContent className="space-y-4">{groups.map(([label, count, color]) => <div key={label}><div className="flex justify-between text-sm"><span>{label}</span><strong>{count}</strong></div><div className="mt-1.5 h-2 overflow-hidden rounded-full bg-muted"><div className={`h-full ${color}`} style={{ width: `${count / maximum * 100}%` }} /></div></div>)}</CardContent></Card>;
 }
+
+function FormField({ label, children }: { label: string; children: React.ReactNode }) { return <div className="space-y-1.5"><Label>{label}</Label>{children}</div>; }
 
 export default function Dashboard({ initialData, reportSelection, reportSourceOptions, sourceRepository, cypressProfiles, reportFields, cypressConfigFields, suggestedProfileId, user }: {
   initialData: DashboardData;
@@ -181,422 +52,81 @@ export default function Dashboard({ initialData, reportSelection, reportSourceOp
   suggestedProfileId: string;
   user: { name: string };
 }) {
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const [risk, setRisk] = useState("");
   const [moduleName, setModuleName] = useState("");
-  const [selected, setSelected] = useState<GridRowSelectionModel>({ type: "include", ids: new Set() });
-  const [copied, setCopied] = useState(false);
+  const [selectedSpecs, setSelectedSpecs] = useState<string[]>([]);
   const [runDialogOpen, setRunDialogOpen] = useState(false);
   const [runPending, setRunPending] = useState(false);
   const [runError, setRunError] = useState("");
-  const [runResult, setRunResult] = useState<{ requestId: string; actionsUrl: string } | null>(null);
-  const [runOptions, setRunOptions] = useState<CypressRunFormOptions>({
-    runs: 5,
-    threads: 1,
-    browser: "chrome",
-    timeoutSeconds: 600,
-    profileId: suggestedProfileId,
-    cypressConfig: {},
-  });
+  const [runOptions, setRunOptions] = useState<CypressRunFormOptions>({ runs: 5, threads: 1, browser: "chrome", timeoutSeconds: 600, profileId: suggestedProfileId, cypressConfig: {} });
   const [draftSource, setDraftSource] = useState(reportSelection);
   const [draftSourceOptions, setDraftSourceOptions] = useState(reportSourceOptions);
   const [sourceLoading, setSourceLoading] = useState<"launches" | "runs" | null>(null);
   const [sourceLoadError, setSourceLoadError] = useState("");
-  const reportFormRef = useRef<HTMLFormElement>(null);
   const sourceRequestRef = useRef<AbortController | null>(null);
   const stableSourceRef = useRef({ selection: reportSelection, options: reportSourceOptions });
   const deferredSearch = useDeferredValue(search.toLowerCase());
   const latestLaunchId = reportSourceOptions.launchRuns[0]?.id;
-  const isHistoricalRun = reportSelection.launchId !== undefined
-    && latestLaunchId !== undefined
-    && reportSelection.launchId !== latestLaunchId;
-  const modules = [...new Set(initialData.rows.map((row) => row.module))].sort();
-  const rows = initialData.rows.filter((row) =>
-    (!deferredSearch || `${row.name} ${row.specPath}`.toLowerCase().includes(deferredSearch))
-    && (!risk || row.risk === risk)
-    && (!moduleName || row.module === moduleName));
-  const selectedSpecs = [...new Set(initialData.rows
-    .filter((row) => selected.ids.has(row.id))
-    .map((row) => row.specPath))];
+  const isHistoricalRun = reportSelection.launchId !== undefined && latestLaunchId !== undefined && reportSelection.launchId !== latestLaunchId;
+  const modules = useMemo(() => [...new Set(initialData.rows.map((row) => row.module))].sort(), [initialData.rows]);
+  const rows = useMemo(() => initialData.rows.filter((row) => (!deferredSearch || `${row.name} ${row.specPath}`.toLowerCase().includes(deferredSearch)) && (!risk || row.risk === risk) && (!moduleName || row.module === moduleName)), [deferredSearch, initialData.rows, moduleName, risk]);
+  const handleSelectedSpecs = useCallback((specs: string[]) => setSelectedSpecs(specs), []);
 
   useEffect(() => () => sourceRequestRef.current?.abort(), []);
-
-  const cancelSourceLoad = () => {
+  const cancelSourceLoad = () => { sourceRequestRef.current?.abort(); sourceRequestRef.current = null; setDraftSource(stableSourceRef.current.selection); setDraftSourceOptions(stableSourceRef.current.options); setSourceLoadError(""); setSourceLoading(null); };
+  const loadSourceChildren = async (requestedLaunchName: string | undefined, loading: "launches" | "runs") => {
     sourceRequestRef.current?.abort();
-    sourceRequestRef.current = null;
-    setDraftSource(stableSourceRef.current.selection);
-    setDraftSourceOptions(stableSourceRef.current.options);
-    setSourceLoadError("");
-    setSourceLoading(null);
-  };
-
-  const loadSourceChildren = async (
-    project: string,
-    requestedLaunchName: string | undefined,
-    loading: "launches" | "runs",
-  ) => {
-    sourceRequestRef.current?.abort();
-    const controller = new AbortController();
-    sourceRequestRef.current = controller;
-    setSourceLoading(loading);
-    setSourceLoadError("");
-    setDraftSource((current) => ({
-      ...current,
-      project,
-      launchName: requestedLaunchName || "",
-      launchId: undefined,
-    }));
-    setDraftSourceOptions((current) => ({
-      ...current,
-      launches: loading === "launches" ? [] : current.launches,
-      launchRuns: [],
-    }));
-
-    const query = new URLSearchParams({ project });
-    if (requestedLaunchName) query.set("launchName", requestedLaunchName);
-
+    const controller = new AbortController(); sourceRequestRef.current = controller; setSourceLoading(loading); setSourceLoadError("");
+    setDraftSource((current) => ({ ...current, launchName: requestedLaunchName || "", launchId: undefined }));
+    setDraftSourceOptions((current) => ({ ...current, launches: loading === "launches" ? [] : current.launches, launchRuns: [] }));
+    const query = new URLSearchParams({ project: reportSelection.project }); if (requestedLaunchName) query.set("launchName", requestedLaunchName);
     try {
-      const response = await fetch(`/api/report-source?${query}`, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
+      const response = await fetch(`/api/report-source?${query}`, { cache: "no-store", signal: controller.signal });
       const result = await response.json() as ReportSourceChildrenResponse;
       if (!response.ok) throw new Error(result.error || "Unable to load report source options");
       if (sourceRequestRef.current !== controller) return;
-
-      const nextSelection: ReportSelection = {
-        ...stableSourceRef.current.selection,
-        project,
-        launchName: result.launchName || "",
-        launchId: result.launchRuns[0]?.id,
-      };
-      const nextOptions: ReportSourceOptions = {
-        projects: stableSourceRef.current.options.projects,
-        launches: result.launches,
-        launchRuns: result.launchRuns,
-      };
-      stableSourceRef.current = { selection: nextSelection, options: nextOptions };
-      setDraftSource(nextSelection);
-      setDraftSourceOptions(nextOptions);
+      const nextSelection: ReportSelection = { ...stableSourceRef.current.selection, launchName: result.launchName || "", launchId: result.launchRuns[0]?.id };
+      const nextOptions: ReportSourceOptions = { projects: stableSourceRef.current.options.projects, launches: result.launches, launchRuns: result.launchRuns };
+      stableSourceRef.current = { selection: nextSelection, options: nextOptions }; setDraftSource(nextSelection); setDraftSourceOptions(nextOptions);
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return;
       if (sourceRequestRef.current !== controller) return;
-      setDraftSource(stableSourceRef.current.selection);
-      setDraftSourceOptions(stableSourceRef.current.options);
-      setSourceLoadError(error instanceof Error ? error.message : "Unable to load report source options");
-    } finally {
-      if (sourceRequestRef.current === controller) {
-        sourceRequestRef.current = null;
-        setSourceLoading(null);
-      }
-    }
+      setDraftSource(stableSourceRef.current.selection); setDraftSourceOptions(stableSourceRef.current.options); setSourceLoadError(error instanceof Error ? error.message : "Unable to load report source options");
+    } finally { if (sourceRequestRef.current === controller) { sourceRequestRef.current = null; setSourceLoading(null); } }
   };
+  const setCypressConfig = (key: string, value: string | number | boolean | undefined) => setRunOptions((current) => { const cypressConfig = { ...current.cypressConfig }; if (value === undefined) delete cypressConfig[key]; else cypressConfig[key] = value; return { ...current, cypressConfig }; });
 
-  const setCypressConfig = (key: string, value: string | number | boolean | undefined) => {
-    setRunOptions((current) => {
-      const cypressConfig = { ...current.cypressConfig };
-      if (value === undefined) delete cypressConfig[key];
-      else cypressConfig[key] = value;
-      return { ...current, cypressConfig };
-    });
-  };
+  return <>
+    <AppHeader currentPage="analysis" userName={user.name} sourceStatus={initialData.meta.source} activeProject={initialData.meta.project} />
+    <main className="pb-16">
+      <section className="border-b bg-gradient-to-br from-muted/70 via-background to-destructive/5"><div className="mx-auto max-w-[1800px] px-4 py-9 lg:px-6"><p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{initialData.meta.project}</p><h1 className="mt-2 break-words text-4xl font-semibold tracking-tight lg:text-5xl">{initialData.meta.launchName}</h1><div className="mt-4 flex flex-wrap gap-2">{initialData.meta.launchNumber !== null && <Badge>Launch #{initialData.meta.launchNumber}</Badge>}{initialData.meta.launchId !== null && <Badge variant="outline">ID {initialData.meta.launchId}</Badge>}<Badge variant={initialData.meta.launchStatus === "PASSED" ? "secondary" : "destructive"}>{initialData.meta.launchStatus}</Badge><Badge variant="outline">{initialData.meta.historyDepth}-run history</Badge>{initialData.meta.fields.filter(({ value }) => value).map(({ key, label, value }) => <Badge key={key} variant="outline">{label}: {value}</Badge>)}</div></div></section>
+      <div className="mx-auto max-w-[1800px] space-y-5 px-4 py-6 lg:px-6">
+        <Card><CardHeader className="pb-2"><div className="flex flex-wrap items-center justify-between gap-2"><div><CardTitle>Report source</CardTitle><CardDescription>Project <strong>{reportSelection.project}</strong> is global. Change it in Settings.</CardDescription></div><Button asChild variant="ghost" size="sm"><Link href="/settings"><Settings2 />Configure fields</Link></Button></div></CardHeader><CardContent>
+          <form action="/" method="get" className="grid items-end gap-3 md:grid-cols-[minmax(240px,1.5fr)_minmax(190px,.8fr)_repeat(auto-fit,minmax(170px,1fr))_150px_auto]">
+            <FormField label="Launch name"><Select name="launchName" value={draftSource.launchName} disabled={sourceLoading === "launches"} onValueChange={(value) => void loadSourceChildren(value, "runs")}><SelectTrigger><SelectValue placeholder="Select launch" /></SelectTrigger><SelectContent>{draftSourceOptions.launches.map((launchName) => <SelectItem key={launchName} value={launchName}>{launchName}</SelectItem>)}</SelectContent></Select></FormField>
+            <FormField label="Run"><Select name="launchId" value={draftSource.launchId === undefined ? "" : String(draftSource.launchId)} disabled={Boolean(sourceLoading) || !draftSourceOptions.launchRuns.length} onValueChange={(value) => { const selection = { ...draftSource, launchId: Number(value) }; stableSourceRef.current = { ...stableSourceRef.current, selection }; setDraftSource(selection); }}><SelectTrigger><SelectValue placeholder="Select run" /></SelectTrigger><SelectContent>{draftSourceOptions.launchRuns.map((run, index) => <SelectItem key={run.id} value={String(run.id)}>#{run.number} · {run.status}{index === 0 ? " · Latest" : ""}</SelectItem>)}</SelectContent></Select></FormField>
+            {reportFields.map((field) => <FormField key={field.key} label={field.label}><Input name={`field.${field.key}`} defaultValue={reportSelection.fields[field.key] || ""} required={field.required} /></FormField>)}
+            <FormField label="History depth"><Select name="historyDepth" defaultValue={String(reportSelection.historyDepth)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[5, 10, 15, 20, 30].map((value) => <SelectItem key={value} value={String(value)}>{value} runs</SelectItem>)}</SelectContent></Select></FormField>
+            <div className="flex gap-1">{sourceLoading && <Button type="button" variant="ghost" onClick={cancelSourceLoad}>Cancel</Button>}<Button type="submit" disabled={Boolean(sourceLoading) || !draftSource.launchName || draftSource.launchId === undefined}>{sourceLoading ? <Loader2 className="animate-spin" /> : null}Apply</Button></div>
+          </form>
+          {sourceLoadError && <Alert variant="destructive" className="mt-3"><CircleAlert /><AlertTitle>Unable to load source</AlertTitle><AlertDescription>{sourceLoadError}</AlertDescription></Alert>}
+        </CardContent></Card>
+        {isHistoricalRun && <Alert><CircleAlert /><AlertTitle>Historical run selected</AlertTitle><AlertDescription>You are analyzing launch #{initialData.meta.launchNumber}; latest is #{reportSourceOptions.launchRuns[0]?.number}.</AlertDescription></Alert>}
+        {initialData.meta.error && <Alert variant="destructive"><CircleAlert /><AlertTitle>Failed to load ReportPortal data</AlertTitle><AlertDescription>{initialData.meta.error}</AlertDescription></Alert>}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Current suite failure rate" value={`${initialData.metrics.suiteFailureRate.toFixed(1)}%`} detail={`${initialData.metrics.suiteFailed} failed of ${initialData.metrics.suiteTotal} filtered tests`} /><Metric label="Failed test identities" value={String(initialData.rows.length)} detail={`${new Set(initialData.rows.map((row) => row.specPath)).size} unique Cypress specs`} /><Metric label="Historical cohort failures" value={`${initialData.metrics.cohortExecutions ? Math.round(initialData.metrics.cohortFailures / initialData.metrics.cohortExecutions * 100) : 0}%`} detail={`${initialData.metrics.cohortFailures} of ${initialData.metrics.cohortExecutions} observations`} /><Metric label="Immediate regressions" value={String(initialData.metrics.regressions)} detail="Current failures preceded by a passed run" /></div>
+        <div className="grid gap-4 xl:grid-cols-[2fr_1fr]"><Trend data={initialData} /><Distribution data={initialData} /></div>
+        <div className="flex flex-wrap items-end gap-2"><FormField label="Search"><Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tests or specs" className="w-full sm:w-80" /></FormField><FormField label="Risk"><Select value={risk || "all"} onValueChange={(value) => setRisk(value === "all" ? "" : value)}><SelectTrigger className="w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All risks</SelectItem>{risks.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></FormField><FormField label="Module"><Select value={moduleName || "all"} onValueChange={(value) => setModuleName(value === "all" ? "" : value)}><SelectTrigger className="w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All modules</SelectItem>{modules.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></FormField><div className="ml-auto flex gap-2"><Button variant="outline" disabled={!selectedSpecs.length} onClick={async () => { await navigator.clipboard.writeText(selectedSpecs.join("\n")); toast.success(`${selectedSpecs.length} spec path${selectedSpecs.length === 1 ? "" : "s"} copied`); }}><Clipboard />Copy {selectedSpecs.length || "selected"}</Button><Button disabled={!selectedSpecs.length} onClick={() => { setRunError(""); setRunDialogOpen(true); }}><Play />Run selected</Button></div></div>
+        <FailureTable rows={rows} historyDepth={initialData.meta.historyDepth} sourceRepository={sourceRepository} onSelectedSpecs={handleSelectedSpecs} />
+      </div>
+    </main>
 
-  const columns: GridColDef<FailureRow>[] = [
-    { field: "risk", headerName: "Risk", width: 125, renderCell: ({ value }) => <Chip size="small" label={value} color={riskColors[value as Risk]} variant="outlined" /> },
-    {
-      field: "name", headerName: "Failed test", minWidth: 420, flex: 1,
-      renderCell: ({ row }) => <Box sx={{ py: 1 }}><Typography variant="body2" sx={{ fontWeight: 700, lineHeight: 1.35 }}>{row.name}</Typography><Stack direction="row" spacing={0.5} sx={{ alignItems: "center" }}><Typography variant="caption" color="primary" sx={{ fontFamily: "monospace" }}>{row.specPath}</Typography><Tooltip title="Copy spec path"><IconButton size="small" onClick={() => navigator.clipboard.writeText(row.specPath)}><ContentCopyRounded sx={{ fontSize: 15 }} /></IconButton></Tooltip></Stack></Box>,
-    },
-    { field: "module", headerName: "Module", width: 135 },
-    {
-      field: "statuses",
-      headerName: `Last ${initialData.meta.historyDepth} runs`,
-      description: "Oldest run on the left, newest run on the right. Green passed; red failed.",
-      width: Math.min(260, Math.max(170, initialData.meta.historyDepth * 7 + 40)),
-      sortable: false,
-      filterable: false,
-      renderCell: ({ row }) => <RecentRuns row={row} />,
-    },
-    { field: "failureRate", headerName: "Failure rate", width: 125, type: "number", valueFormatter: (value) => `${value}%` },
-    { field: "currentStreak", headerName: "Streak", width: 90, type: "number" },
-    { field: "transitions", headerName: "Transitions", width: 105, type: "number" },
-    { field: "defect", headerName: "Classification", width: 145 },
-    {
-      field: "links", headerName: "Links", width: 150, sortable: false, filterable: false,
-      renderCell: ({ row }) => <Stack direction="row"><Tooltip title="Open source spec"><IconButton component={Link} href={`https://github.com/${sourceRepository.owner}/${sourceRepository.repository}/blob/${sourceRepository.ref}/${row.specPath}`} target="_blank" rel="noreferrer"><ContentCopyRounded fontSize="small" /></IconButton></Tooltip><Tooltip title="Open ReportPortal log"><IconButton component={Link} href={row.reportPortalUrl} target="_blank"><LaunchRounded fontSize="small" /></IconButton></Tooltip>{row.testRailUrl && <Tooltip title="Open TestRail case"><IconButton component={Link} href={row.testRailUrl} target="_blank"><ScienceRounded fontSize="small" /></IconButton></Tooltip>}</Stack>,
-    },
-  ];
-
-  return (
-    <ThemeProvider theme={appTheme}>
-      <CssBaseline />
-      <AppHeader currentPage="analysis" userName={user.name} sourceStatus={initialData.meta.source} />
-      <Box component="main" sx={{ pb: 7 }}>
-        <Box sx={{ borderBottom: 1, borderColor: "divider", background: "linear-gradient(115deg, #eef4f0 0%, #f3f1eb 55%, #f5e7df 100%)" }}>
-          <Container maxWidth={false} sx={{ py: { xs: 3, md: 5 } }}>
-            <Typography variant="overline" color="secondary" sx={{ fontWeight: 800 }}>{initialData.meta.project}</Typography>
-            <Typography variant="h1" sx={{ mt: 0.5, fontSize: { xs: 34, md: 52 }, overflowWrap: "anywhere" }}>{initialData.meta.launchName}</Typography>
-            <Stack direction="row" sx={{ flexWrap: "wrap", gap: 1, mt: 2 }}>
-              {initialData.meta.launchNumber !== null && <Chip label={`Launch #${initialData.meta.launchNumber}`} />}
-              {initialData.meta.launchId !== null && <Chip label={`ID ${initialData.meta.launchId}`} />}
-              <Chip color="error" variant="outlined" label={initialData.meta.launchStatus} />
-              <Chip variant="outlined" label={`${initialData.meta.historyDepth}-run history`} />
-              {initialData.meta.fields.filter(({ value }) => value).map(({ key, label, value }) => <Chip key={key} variant="outlined" label={`${label}: ${value}`} />)}
-            </Stack>
-          </Container>
-        </Box>
-        <Container maxWidth={false} sx={{ mt: 3 }}>
-          <Paper ref={reportFormRef} component="form" action="/" method="get" variant="outlined" sx={{ p: 2, mb: 2 }}>
-            <Typography variant="h6" sx={{ mb: 1.5 }}>Report source</Typography>
-            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "repeat(auto-fit, minmax(180px, 1fr))" }, gap: 1.25, alignItems: "center" }}>
-              <FormControl size="small" required>
-                <InputLabel>Project</InputLabel>
-                <Select
-                  name="project"
-                  label="Project"
-                  value={draftSource.project}
-                  onChange={(event) => {
-                    void loadSourceChildren(event.target.value, undefined, "launches");
-                  }}
-                >
-                  {draftSourceOptions.projects.map((project) => <MenuItem key={project} value={project}>{project}</MenuItem>)}
-                </Select>
-              </FormControl>
-              <Box sx={{ position: "relative" }}>
-                <FormControl size="small" required fullWidth disabled={sourceLoading === "launches"}>
-                  <InputLabel>Launch name</InputLabel>
-                  <Select
-                    name="launchName"
-                    label="Launch name"
-                    value={draftSource.launchName}
-                    onChange={(event) => {
-                      void loadSourceChildren(draftSource.project, event.target.value, "runs");
-                    }}
-                  >
-                    {draftSourceOptions.launches.map((launchName) => <MenuItem key={launchName} value={launchName}>{launchName}</MenuItem>)}
-                  </Select>
-                </FormControl>
-                {sourceLoading === "launches" && <CircularProgress aria-label="Loading launch names" size={18} sx={{ position: "absolute", right: 36, top: 11 }} />}
-              </Box>
-              <Box sx={{ position: "relative" }}>
-                <FormControl size="small" required fullWidth disabled={Boolean(sourceLoading) || !draftSourceOptions.launchRuns.length}>
-                  <InputLabel>Run</InputLabel>
-                  <Select
-                    name="launchId"
-                    label="Run"
-                    value={draftSource.launchId ?? ""}
-                    onChange={(event) => {
-                      const selection = { ...draftSource, launchId: Number(event.target.value) };
-                      stableSourceRef.current = { ...stableSourceRef.current, selection };
-                      setDraftSource(selection);
-                    }}
-                  >
-                    {draftSourceOptions.launchRuns.map((run, index) => (
-                      <MenuItem key={run.id} value={run.id}>
-                        #{run.number} · {run.status}{index === 0 ? " · Latest" : ""}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                {sourceLoading && <CircularProgress aria-label="Loading runs" size={18} sx={{ position: "absolute", right: 36, top: 11 }} />}
-              </Box>
-              {reportFields.map((field) => (
-                <TextField
-                  key={field.key}
-                  name={`field.${field.key}`}
-                  label={field.label}
-                  size="small"
-                  defaultValue={reportSelection.fields[field.key] || ""}
-                  required={field.required}
-                />
-              ))}
-              <FormControl size="small">
-                <InputLabel>History depth</InputLabel>
-                <Select name="historyDepth" label="History depth" defaultValue={reportSelection.historyDepth}>
-                  {[5, 10, 15, 20, 30].map((value) => <MenuItem key={value} value={value}>{value} runs</MenuItem>)}
-                </Select>
-              </FormControl>
-              <Stack direction="row" spacing={0.75}>
-                {sourceLoading && <Button type="button" variant="text" onClick={cancelSourceLoad}>Cancel</Button>}
-                <Button
-                  type="submit"
-                  variant="contained"
-                  disabled={Boolean(sourceLoading) || !draftSource.launchName || draftSource.launchId === undefined}
-                >
-                  Apply
-                </Button>
-              </Stack>
-            </Box>
-            {sourceLoadError && <Alert severity="error" sx={{ mt: 1.5 }} onClose={() => setSourceLoadError("")}>{sourceLoadError}</Alert>}
-          </Paper>
-          {isHistoricalRun && (
-            <Alert severity="warning" variant="outlined" sx={{ mb: 2 }}>
-              You are analyzing historical launch #{initialData.meta.launchNumber}. The latest completed run for this launch name is #{reportSourceOptions.launchRuns[0]?.number}.
-            </Alert>
-          )}
-          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "repeat(2, 1fr)", lg: "repeat(4, 1fr)" }, gap: 1.5 }}>
-            <Metric label="Current suite failure rate" value={`${initialData.metrics.suiteFailureRate.toFixed(1)}%`} detail={`${initialData.metrics.suiteFailed} failed of ${initialData.metrics.suiteTotal} filtered tests`} />
-            <Metric label="Failed test identities" value={String(initialData.rows.length)} detail={`${new Set(initialData.rows.map((row) => row.specPath)).size} unique Cypress specs`} />
-            <Metric label="Historical cohort failures" value={`${initialData.metrics.cohortExecutions ? Math.round((initialData.metrics.cohortFailures / initialData.metrics.cohortExecutions) * 100) : 0}%`} detail={`${initialData.metrics.cohortFailures} of ${initialData.metrics.cohortExecutions} observations`} />
-            <Metric label="Immediate regressions" value={String(initialData.metrics.regressions)} detail="Current failures preceded by a passed run" />
-          </Box>
-          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "2fr 1fr" }, gap: 1.5, mt: 1.5 }}><Trend data={initialData} /><Distribution data={initialData} /></Box>
-          <Stack sx={{ flexDirection: { xs: "column", md: "row" }, gap: 1, my: 2.5 }}>
-            <TextField size="small" label="Search tests or specs" value={search} onChange={(event) => setSearch(event.target.value)} sx={{ minWidth: { md: 320 }, flex: 1 }} />
-            <FormControl size="small" sx={{ minWidth: 170 }}><InputLabel>Risk</InputLabel><Select label="Risk" value={risk} onChange={(event) => setRisk(event.target.value)}><MenuItem value="">All risks</MenuItem>{Object.keys(riskColors).map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</Select></FormControl>
-            <FormControl size="small" sx={{ minWidth: 170 }}><InputLabel>Module</InputLabel><Select label="Module" value={moduleName} onChange={(event) => setModuleName(event.target.value)}><MenuItem value="">All modules</MenuItem>{modules.map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</Select></FormControl>
-            <Button
-              variant="outlined"
-              startIcon={<ContentCopyRounded />}
-              disabled={!selectedSpecs.length}
-              onClick={async () => {
-                await navigator.clipboard.writeText(selectedSpecs.join("\n"));
-                setCopied(true);
-              }}
-            >
-              Copy {selectedSpecs.length || "selected"} {selectedSpecs.length === 1 ? "spec" : "specs"}
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={<PlayArrowRounded />}
-              disabled={!selectedSpecs.length}
-              onClick={() => {
-                setRunError("");
-                setRunDialogOpen(true);
-              }}
-            >
-              Run selected
-            </Button>
-          </Stack>
-          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
-            {rows.length} of {initialData.rows.length} failures match the active filters. Sorting and column filters apply to all matching rows before pagination.
-          </Typography>
-          <Paper variant="outlined" sx={{ height: 690, width: "100%" }}>
-            <DataGrid rows={rows} columns={columns} sortingMode="client" filterMode="client" paginationMode="client" checkboxSelection disableRowSelectionOnClick rowSelectionModel={selected} onRowSelectionModelChange={setSelected} rowHeight={76} pageSizeOptions={[10, 25, 50, 100]} localeText={{ noRowsLabel: "No data" }} initialState={{ pagination: { paginationModel: { pageSize: 10 } }, sorting: { sortModel: [{ field: "failureRate", sort: "desc" }] } }} sx={{ border: 0, "& .MuiDataGrid-columnHeaderTitle": { fontWeight: 800 }, "& .MuiDataGrid-cell": { alignItems: "center" } }} />
-          </Paper>
-        </Container>
-      </Box>
-      <Snackbar open={copied} autoHideDuration={2500} onClose={() => setCopied(false)} message={`${selectedSpecs.length} unique spec ${selectedSpecs.length === 1 ? "path" : "paths"} copied`} />
-      <Dialog open={runDialogOpen} onClose={() => !runPending && setRunDialogOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>Run selected Cypress specs</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            <Alert severity="info">{selectedSpecs.length} unique {selectedSpecs.length === 1 ? "spec" : "specs"} will run in GitHub Actions.</Alert>
-            <FormControl>
-              <InputLabel>Cypress profile</InputLabel>
-              <Select
-                label="Cypress profile"
-                value={runOptions.profileId}
-                onChange={(event) => setRunOptions((current) => ({ ...current, profileId: event.target.value }))}
-                required
-              >
-                {cypressProfiles.map((profile) => <MenuItem key={profile.id} value={profile.id}>{profile.name}{profile.isDefault ? " · Default" : ""}</MenuItem>)}
-              </Select>
-            </FormControl>
-            {!cypressProfiles.length && (
-              <Typography variant="caption" color="text.secondary">
-                No Cypress profiles are configured. Create one in Settings before starting a run.
-              </Typography>
-            )}
-            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
-              <TextField label="Runs per spec" type="number" value={runOptions.runs} slotProps={{ htmlInput: { min: 1, max: 20 } }} onChange={(event) => setRunOptions((current) => ({ ...current, runs: Number(event.target.value) }))} />
-              <TextField label="Concurrent threads" type="number" value={runOptions.threads} slotProps={{ htmlInput: { min: 1, max: 4 } }} onChange={(event) => setRunOptions((current) => ({ ...current, threads: Number(event.target.value) }))} />
-              <FormControl>
-                <InputLabel>Browser</InputLabel>
-                <Select label="Browser" value={runOptions.browser} onChange={(event) => setRunOptions((current) => ({ ...current, browser: event.target.value }))}>
-                  <MenuItem value="chrome">Chrome</MenuItem>
-                  <MenuItem value="electron">Electron</MenuItem>
-                </Select>
-              </FormControl>
-              <TextField label="Per-run timeout (seconds)" type="number" value={runOptions.timeoutSeconds} slotProps={{ htmlInput: { min: 60, max: 1200 } }} onChange={(event) => setRunOptions((current) => ({ ...current, timeoutSeconds: Number(event.target.value) }))} />
-            </Box>
-            <Accordion variant="outlined" disableGutters>
-              <AccordionSummary expandIcon={<ExpandMoreRounded />}>
-                <Box>
-                  <Typography sx={{ fontWeight: 700 }}>Advanced Cypress configuration</Typography>
-                  <Typography variant="caption" color="text.secondary">Blank values inherit from the selected environment and cypress.config.js.</Typography>
-                </Box>
-              </AccordionSummary>
-              <AccordionDetails>
-                <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
-                  {cypressConfigFields.map((field) => field.type === "boolean" ? (
-                    <FormControl key={field.key}>
-                      <InputLabel>{field.label}</InputLabel>
-                      <Select
-                        label={field.label}
-                        value={runOptions.cypressConfig[field.key] === undefined ? "" : String(runOptions.cypressConfig[field.key])}
-                        onChange={(event) => setCypressConfig(
-                          field.key,
-                          event.target.value === "" ? undefined : event.target.value === "true",
-                        )}
-                      >
-                        <MenuItem value="">Inherit default</MenuItem>
-                        <MenuItem value="true">Enabled</MenuItem>
-                        <MenuItem value="false">Disabled</MenuItem>
-                      </Select>
-                    </FormControl>
-                  ) : (
-                    <TextField
-                      key={field.key}
-                      label={field.label}
-                      type={field.type === "number" ? "number" : "text"}
-                      value={runOptions.cypressConfig[field.key] ?? ""}
-                      slotProps={{ htmlInput: { min: field.minimum, max: field.maximum } }}
-                      onChange={(event) => setCypressConfig(
-                        field.key,
-                        event.target.value === "" ? undefined : field.type === "number" ? Number(event.target.value) : event.target.value,
-                      )}
-                    />
-                  ))}
-                  {!cypressConfigFields.length && <Typography color="text.secondary">No run override fields are configured.</Typography>}
-                </Box>
-              </AccordionDetails>
-            </Accordion>
-            {runError && <Alert severity="error">{runError}</Alert>}
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setRunDialogOpen(false)} disabled={runPending}>Cancel</Button>
-          <Button
-            variant="contained"
-            startIcon={<PlayArrowRounded />}
-            loading={runPending}
-            disabled={!runOptions.profileId}
-            onClick={async () => {
-              setRunPending(true);
-              setRunError("");
-              try {
-                const response = await fetch("/api/runs", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    specs: selectedSpecs,
-                    ...runOptions,
-                  }),
-                });
-                const result = await response.json() as { requestId: string; actionsUrl: string; error?: string };
-                if (!response.ok) throw new Error(result.error || "Unable to start Cypress run");
-                setRunResult(result);
-                setRunDialogOpen(false);
-              } catch (error) {
-                setRunError(error instanceof Error ? error.message : "Unable to start Cypress run");
-              } finally {
-                setRunPending(false);
-              }
-            }}
-          >
-            Start run
-          </Button>
-        </DialogActions>
-      </Dialog>
-      <Snackbar open={Boolean(runResult)} autoHideDuration={12000} onClose={() => setRunResult(null)} anchorOrigin={{ vertical: "bottom", horizontal: "right" }}>
-        <Alert severity="success" variant="filled" action={<Button color="inherit" size="small" component={Link} href="/runs">View runs</Button>}>
-          Cypress run queued. Request {runResult?.requestId.slice(0, 8)}
-        </Alert>
-      </Snackbar>
-      <Snackbar open={Boolean(initialData.meta.error)} autoHideDuration={8000} anchorOrigin={{ vertical: "bottom", horizontal: "right" }}>
-        <Alert severity="error" variant="filled" sx={{ width: "100%" }}>Failed to load ReportPortal data: {initialData.meta.error}</Alert>
-      </Snackbar>
-    </ThemeProvider>
-  );
+    <Dialog open={runDialogOpen} onOpenChange={(open) => !runPending && setRunDialogOpen(open)}><DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>Run selected Cypress specs</DialogTitle><DialogDescription>{selectedSpecs.length} unique {selectedSpecs.length === 1 ? "spec" : "specs"} will run in GitHub Actions.</DialogDescription></DialogHeader><div className="space-y-4">
+      <FormField label="Cypress profile"><Select value={runOptions.profileId} onValueChange={(profileId) => setRunOptions((current) => ({ ...current, profileId }))}><SelectTrigger><SelectValue placeholder="Choose profile" /></SelectTrigger><SelectContent>{cypressProfiles.map((profile) => <SelectItem key={profile.id} value={profile.id}>{profile.name}{profile.isDefault ? " · Default" : ""}</SelectItem>)}</SelectContent></Select>{!cypressProfiles.length && <p className="text-xs text-muted-foreground">Create a Cypress profile in Settings first.</p>}</FormField>
+      <div className="grid gap-3 sm:grid-cols-2"><FormField label="Runs per spec"><Input type="number" min={1} max={20} value={runOptions.runs} onChange={(event) => setRunOptions((current) => ({ ...current, runs: Number(event.target.value) }))} /></FormField><FormField label="Concurrent threads"><Input type="number" min={1} max={4} value={runOptions.threads} onChange={(event) => setRunOptions((current) => ({ ...current, threads: Number(event.target.value) }))} /></FormField><FormField label="Browser"><Select value={runOptions.browser} onValueChange={(browser: "chrome" | "electron") => setRunOptions((current) => ({ ...current, browser }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="chrome">Chrome</SelectItem><SelectItem value="electron">Electron</SelectItem></SelectContent></Select></FormField><FormField label="Per-run timeout (seconds)"><Input type="number" min={60} max={1200} value={runOptions.timeoutSeconds} onChange={(event) => setRunOptions((current) => ({ ...current, timeoutSeconds: Number(event.target.value) }))} /></FormField></div>
+      <Accordion type="single" collapsible><AccordionItem value="advanced"><AccordionTrigger><span><span className="block text-left">Advanced Cypress configuration</span><span className="block text-left text-xs font-normal text-muted-foreground">Blank values inherit from the profile and cypress.config.js.</span></span></AccordionTrigger><AccordionContent><div className="grid gap-3 sm:grid-cols-2">{cypressConfigFields.map((field) => field.type === "boolean" ? <FormField key={field.key} label={field.label}><Select value={runOptions.cypressConfig[field.key] === undefined ? "inherit" : String(runOptions.cypressConfig[field.key])} onValueChange={(value) => setCypressConfig(field.key, value === "inherit" ? undefined : value === "true")}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inherit">Inherit default</SelectItem><SelectItem value="true">Enabled</SelectItem><SelectItem value="false">Disabled</SelectItem></SelectContent></Select></FormField> : <FormField key={field.key} label={field.label}><Input type={field.type === "number" ? "number" : "text"} min={field.minimum} max={field.maximum} value={String(runOptions.cypressConfig[field.key] ?? "")} onChange={(event) => setCypressConfig(field.key, event.target.value === "" ? undefined : field.type === "number" ? Number(event.target.value) : event.target.value)} /></FormField>)}{!cypressConfigFields.length && <p className="text-sm text-muted-foreground">No run override fields are configured.</p>}</div></AccordionContent></AccordionItem></Accordion>
+      {runError && <Alert variant="destructive"><CircleAlert /><AlertTitle>Unable to start run</AlertTitle><AlertDescription>{runError}</AlertDescription></Alert>}
+    </div><DialogFooter><Button variant="outline" onClick={() => setRunDialogOpen(false)} disabled={runPending}>Cancel</Button><Button disabled={!runOptions.profileId || runPending} onClick={async () => { setRunPending(true); setRunError(""); try { const response = await fetch("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ specs: selectedSpecs, ...runOptions }) }); const result = await response.json() as { requestId: string; error?: string }; if (!response.ok) throw new Error(result.error || "Unable to start Cypress run"); setRunDialogOpen(false); toast.success("Cypress run queued", { description: `Request ${result.requestId.slice(0, 8)}`, action: { label: "View runs", onClick: () => router.push("/runs") } }); } catch (error) { setRunError(error instanceof Error ? error.message : "Unable to start Cypress run"); } finally { setRunPending(false); } }}>{runPending ? <Loader2 className="animate-spin" /> : <Play />}Start run</Button></DialogFooter></DialogContent></Dialog>
+  </>;
 }

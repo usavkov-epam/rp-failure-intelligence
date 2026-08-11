@@ -4,11 +4,12 @@ An organization-agnostic ReportPortal analytics dashboard that links failures to
 
 For architecture, use cases, security boundaries, code conventions, data flows, and contribution guidance, see [Engineering Guide](docs/ENGINEERING.md).
 
-The included `.env.example` demonstrates read-only source links to `folio-org/stripes-testing`. Organization names, source repositories, refs, and integration endpoints are runtime configuration rather than product policy. ReportPortal project, launch name, specific run, configured report fields, and history depth are selected in the web app.
+The included `.env.example` demonstrates read-only source links to `folio-org/stripes-testing`. Organization names, source repositories, refs, and integration endpoints are runtime configuration rather than product policy. The active ReportPortal project, launch name, specific run, configured report fields, and history depth are selected in the web app.
 
 ## Architecture
 
-- Next.js 16, React 19, Material UI, and MUI Data Grid
+- Next.js 16 and React 19
+- Repository-owned shadcn/ui source components with Radix primitives, Tailwind CSS, Lucide icons, and TanStack Table
 - Server-only ReportPortal REST client with explicit error and empty states
 - Auth.js GitHub OAuth with selectable organization-membership or static-user authorization
 - Read-only links from ReportPortal failures to source specs in GitHub
@@ -39,7 +40,7 @@ Run the app and open [http://localhost:8080](http://localhost:8080). The `pnpm d
 
 After the first sign-in, open **Settings** and configure your ReportPortal connection and dashboard defaults. Credentials are written to Supabase Vault through authenticated server routes and are never returned to the browser after saving. Valid responses without matching failures show `No data`. Live requests use `launch`, `item/v2`, and `item/history`.
 
-Use the **Report source** controls to choose the ReportPortal project, completed launch name, specific run, configured report filters, and history depth. Report fields are user-configurable mappings between a UI label and an allowed ReportPortal filter parameter such as `filter.eq.attributes.component` or `filter.cnt.name`; there is no built-in team concept. The latest completed run is selected by default; choosing an older run displays a warning. Applying a selection stores its launch ID and filter values in the page URL, so the exact report can be bookmarked and shared without changing server environment variables.
+The active ReportPortal project is a persistent global context configured in **Settings → Configuration & mappings** and displayed in the shared header. Use the **Report source** controls for the frequently changed launch name, specific run, configured report filters, and history depth. Report fields are user-configurable mappings between a UI label and an allowed ReportPortal filter parameter such as `filter.eq.attributes.component` or `filter.cnt.name`; there is no built-in team concept. The latest completed run is selected by default; choosing an older run displays a warning. Applying a selection stores its launch ID and filter values in the page URL, so the exact report can be bookmarked and shared.
 
 Run all checks with `pnpm check`.
 
@@ -65,7 +66,7 @@ Create one or more named Cypress profiles in **Settings**, then select failure r
 
 At dispatch, the server creates a one-hour, one-time Vault snapshot. The workflow retrieves it from `/api/workflow/cypress-profile` using a short-lived GitHub Actions OIDC identity token bound to the configured repository, workflow, branch, event, and GitHub-hosted runner. No reusable profile-delivery credential is stored. Secret values never enter workflow inputs, summaries, or artifacts, and runtime credentials are registered for log masking before Cypress starts. The workflow writes mode-`0600` `environments.js`, runs `cypress:repeat`, and removes credential files even when the test step fails. Supabase deletes a consumed snapshot atomically and purges expired unclaimed snapshots every 15 minutes.
 
-The authenticated **Runs** page at `/runs` loads the GitHub user's 20 most recent runs from Supabase. GitHub sends signed `workflow_run` webhooks when a run is queued, starts, or completes. The webhook updates the durable row and publishes an opaque Supabase Realtime Broadcast; the open Runs page then reloads the authenticated list once and shows a completion toast. There is no timer polling. The page displays state, conclusion, duration, selected specs, runner settings, and artifact availability. Use **Actions** to inspect logs and download artifacts.
+The authenticated **Runs** page at `/runs` loads the GitHub user's 20 most recent runs from Supabase. GitHub sends signed `workflow_run` webhooks when a run is queued, starts, or completes. The webhook updates the durable row and publishes an opaque Supabase Realtime Broadcast; the open Runs page then reloads the authenticated list once and shows a completion toast. There is no timer polling. Completed runs expose an owner-scoped details dialog with summary metrics, effective non-secret configuration, GitHub job and step results, and downloadable artifacts. Artifact redirects are resolved server-side; the GitHub token never reaches the browser.
 
 The Broadcast channel name is an HMAC of the immutable GitHub owner key and `AUTH_SECRET`. Its payload contains only the request UUID. Run data remains behind the authenticated `/api/runs` endpoint; the browser has no direct table access.
 

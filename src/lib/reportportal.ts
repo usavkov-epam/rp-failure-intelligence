@@ -110,8 +110,8 @@ export async function resolveReportSelection(connection: ReportPortalConnection,
     // Keep the requested project available when discovery is unavailable.
   }
 
-  const project = projects.includes(selection.project) ? selection.project : projects[0] ?? selection.project;
-  let launches = project === selection.project ? [selection.launchName] : [];
+  const project = selection.project;
+  let launches = [selection.launchName];
   try {
     const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
       "page.size": 200,

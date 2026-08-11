@@ -109,6 +109,26 @@ export interface CypressRunRecord {
   artifactNames?: string[];
 }
 
+export interface CypressRunDetails {
+  jobs: Array<{
+    id: number;
+    name: string;
+    status: string;
+    conclusion: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    htmlUrl: string;
+    steps: Array<{ name: string; number: number; status: string; conclusion: string | null }>;
+  }>;
+  artifacts: Array<{
+    id: number;
+    name: string;
+    sizeInBytes: number;
+    createdAt: string;
+    downloadUrl: string;
+  }>;
+}
+
 export interface ReportPortalItem {
   id: number;
   parent?: number;

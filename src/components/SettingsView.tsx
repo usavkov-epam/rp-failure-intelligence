@@ -1,23 +1,22 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Alert, Box, Button, Checkbox, Container, CssBaseline, Dialog, DialogActions, DialogContent,
-  DialogTitle, FormControl, FormControlLabel, IconButton, InputLabel, MenuItem, Paper, Select,
-  Stack, Tab, Tabs, TextField, ThemeProvider, Typography,
-} from "@mui/material";
-import AddRounded from "@mui/icons-material/AddRounded";
-import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
-import EditRounded from "@mui/icons-material/EditRounded";
-import SaveRounded from "@mui/icons-material/SaveRounded";
+import { CheckCircle2, CircleAlert, Loader2, Pencil, Plus, Save, Trash2 } from "lucide-react";
 
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { defaultCypressConfigFields, legacyReportFields } from "@/lib/configuration-mappings";
 import { dashboardSettingsFormValue } from "@/lib/dashboard-settings-form";
-import type {
-  CypressProfileInput, CypressProfileView, DashboardSettingsInput, DashboardSettingsView,
-} from "@/lib/user-settings-schema";
+import type { CypressProfileInput, CypressProfileView, DashboardSettingsInput, DashboardSettingsView } from "@/lib/user-settings-schema";
 import AppHeader from "./AppHeader";
-import { appTheme } from "./app-theme";
 
 const emptyDashboard: DashboardSettingsInput = {
   reportPortalApiUrl: "https://report-portal.example.org/api/v1",
@@ -32,7 +31,6 @@ const emptyDashboard: DashboardSettingsInput = {
   cypressConfigFields: defaultCypressConfigFields,
   launchProfileMappings: [],
 };
-
 const emptyProfile: CypressProfileInput = { name: "", baseUrl: "", variables: [], isDefault: false };
 
 async function jsonRequest<T>(url: string, init: RequestInit): Promise<T> {
@@ -42,15 +40,35 @@ async function jsonRequest<T>(url: string, init: RequestInit): Promise<T> {
   return result as T;
 }
 
+function Field({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
+  return <div className="space-y-1.5"><Label>{label}</Label>{children}{description && <p className="text-xs text-muted-foreground">{description}</p>}</div>;
+}
+
+function StoredSecretField({ label, configured, editing, value, optional, onEditingChange, onChange }: {
+  label: string;
+  configured: boolean;
+  editing: boolean;
+  value: string;
+  optional?: boolean;
+  onEditingChange: (editing: boolean) => void;
+  onChange: (value: string) => void;
+}) {
+  if (configured && !editing) {
+    return <div className="space-y-1.5"><Label>{label}</Label><div className="flex min-h-10 items-center justify-between gap-3 rounded-lg border bg-muted/25 px-3"><Badge variant="secondary" className="gap-1.5"><CheckCircle2 className="size-3.5 text-emerald-600" />Configured securely</Badge><Button type="button" variant="ghost" size="sm" onClick={() => onEditingChange(true)}>Change</Button></div><p className="text-xs text-muted-foreground">The stored value is encrypted and never returned to the browser.</p></div>;
+  }
+  return <Field label={label} description={configured ? "Enter a replacement value. The current key remains active until you save." : optional ? "Optional." : "Required."}><div className="flex gap-2"><Input type="password" autoComplete="new-password" value={value} onChange={(event) => onChange(event.target.value)} placeholder={configured ? "Enter replacement key" : "Enter API key"} />{configured && <Button type="button" variant="outline" onClick={() => { onChange(""); onEditingChange(false); }}>Cancel</Button>}</div></Field>;
+}
+
+function EditableSection({ title, description, addLabel, onAdd, children }: { title: string; description: string; addLabel: string; onAdd: () => void; children: React.ReactNode }) {
+  return <section className="space-y-3"><div><h3 className="text-lg font-semibold">{title}</h3><p className="text-sm text-muted-foreground">{description}</p></div>{children}<Button variant="outline" size="sm" onClick={onAdd}><Plus />{addLabel}</Button></section>;
+}
+
 export default function SettingsView({ initialDashboardSettings, initialCypressProfiles, userName }: {
   initialDashboardSettings: DashboardSettingsView | null;
   initialCypressProfiles: CypressProfileView[];
   userName: string;
 }) {
-  const [section, setSection] = useState(0);
-  const [dashboard, setDashboard] = useState<DashboardSettingsInput>(() => (
-    dashboardSettingsFormValue(initialDashboardSettings, emptyDashboard)
-  ));
+  const [dashboard, setDashboard] = useState<DashboardSettingsInput>(() => dashboardSettingsFormValue(initialDashboardSettings, emptyDashboard));
   const [profiles, setProfiles] = useState(initialCypressProfiles);
   const [profile, setProfile] = useState<CypressProfileInput>(emptyProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -58,170 +76,123 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [hasReportPortalKey, setHasReportPortalKey] = useState(Boolean(initialDashboardSettings?.hasReportPortalApiKey));
+  const [hasTestRailKey, setHasTestRailKey] = useState(Boolean(initialDashboardSettings?.hasTestRailApiKey));
+  const [changingReportPortalKey, setChangingReportPortalKey] = useState(!initialDashboardSettings?.hasReportPortalApiKey);
+  const [changingTestRailKey, setChangingTestRailKey] = useState(!initialDashboardSettings?.hasTestRailApiKey);
 
   const openProfile = (existing?: CypressProfileView) => {
     setEditingId(existing?.id || null);
-    setProfile(existing ? {
-      name: existing.name,
-      baseUrl: existing.baseUrl,
-      isDefault: existing.isDefault,
-      variables: existing.variables.map(({ key, type, value, secret }) => ({ key, type, value, secret })),
-    } : emptyProfile);
+    setProfile(existing ? { name: existing.name, baseUrl: existing.baseUrl, isDefault: existing.isDefault, variables: existing.variables.map(({ key, type, value, secret }) => ({ key, type, value, secret })) } : emptyProfile);
     setProfileOpen(true);
   };
-
   const saveDashboard = async () => {
-    setPending(true);
-    setError("");
+    setPending(true); setError("");
     try {
-      const result = await jsonRequest<{ settings: DashboardSettingsView }>("/api/settings/dashboard", {
-        method: "PUT",
-        body: JSON.stringify(dashboard),
-      });
+      const result = await jsonRequest<{ settings: DashboardSettingsView }>("/api/settings/dashboard", { method: "PUT", body: JSON.stringify(dashboard) });
       setDashboard(dashboardSettingsFormValue(result.settings, emptyDashboard));
+      setHasReportPortalKey(result.settings.hasReportPortalApiKey);
+      setHasTestRailKey(result.settings.hasTestRailApiKey);
+      setChangingReportPortalKey(!result.settings.hasReportPortalApiKey);
+      setChangingTestRailKey(!result.settings.hasTestRailApiKey);
       setMessage("Settings saved securely.");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to save settings");
-    } finally {
-      setPending(false);
-    }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save settings"); }
+    finally { setPending(false); }
   };
 
   return (
-    <ThemeProvider theme={appTheme}>
-      <CssBaseline />
-      <AppHeader currentPage="settings" userName={userName} />
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Typography variant="h1" sx={{ fontSize: { xs: 34, md: 48 } }}>Settings</Typography>
-        <Typography color="text.secondary" sx={{ mt: 1, mb: 3 }}>
-          Configure integrations, portal mappings, and reusable Cypress run profiles for your account.
-        </Typography>
-        {error && <Alert severity="error" onClose={() => setError("")} sx={{ mb: 2 }}>{error}</Alert>}
-        {message && <Alert severity="success" onClose={() => setMessage("")} sx={{ mb: 2 }}>{message}</Alert>}
-        <Paper variant="outlined">
-          <Tabs value={section} onChange={(_, value: number) => setSection(value)} variant="scrollable" scrollButtons="auto" sx={{ borderBottom: 1, borderColor: "divider" }}>
-            <Tab label="Integrations" />
-            <Tab label="Configuration & mappings" />
-            <Tab label="Cypress profiles" />
-          </Tabs>
+    <>
+      <AppHeader currentPage="settings" userName={userName} activeProject={dashboard.defaultProject} />
+      <main className="mx-auto max-w-6xl px-4 py-8 lg:px-6">
+        <div className="mb-6"><h1 className="text-4xl font-semibold tracking-tight">Settings</h1><p className="mt-2 text-muted-foreground">Integrations, global ReportPortal context, configurable fields, and reusable Cypress profiles.</p></div>
+        {error && <Alert variant="destructive" className="mb-4"><CircleAlert /><AlertTitle>Unable to save</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
+        {message && <Alert className="mb-4"><AlertTitle>Saved</AlertTitle><AlertDescription>{message}</AlertDescription></Alert>}
+        <Tabs defaultValue="integrations">
+          <TabsList className="mb-4"><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="configuration">Configuration & mappings</TabsTrigger><TabsTrigger value="profiles">Cypress profiles</TabsTrigger></TabsList>
 
-          {section === 0 && (
-            <Stack spacing={3} sx={{ p: { xs: 2, md: 3 } }}>
-              <Box>
-                <Typography variant="h5">ReportPortal</Typography>
-                <Typography variant="body2" color="text.secondary">Credentials belong to your account and are encrypted in Supabase Vault.</Typography>
-              </Box>
-              <TextField label="ReportPortal API URL" value={dashboard.reportPortalApiUrl} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiUrl: event.target.value })} required />
-              <TextField label="ReportPortal API key" type="password" value={dashboard.reportPortalApiKey || ""} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiKey: event.target.value })} helperText={initialDashboardSettings?.hasReportPortalApiKey ? "Configured. Leave blank to keep the existing key." : "Required."} />
-              <Box sx={{ pt: 1 }}>
-                <Typography variant="h5">TestRail (optional)</Typography>
-              </Box>
-              <TextField label="TestRail base URL" value={dashboard.testRailBaseUrl || ""} onChange={(event) => setDashboard({ ...dashboard, testRailBaseUrl: event.target.value })} />
-              <TextField label="TestRail API user" value={dashboard.testRailApiUser || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiUser: event.target.value })} />
-              <TextField label="TestRail API key" type="password" value={dashboard.testRailApiKey || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiKey: event.target.value })} helperText={initialDashboardSettings?.hasTestRailApiKey ? "Configured. Leave blank to keep the existing key." : "Optional."} />
-              <Button startIcon={<SaveRounded />} variant="contained" loading={pending} onClick={saveDashboard} sx={{ alignSelf: "flex-start" }}>Save integrations</Button>
-            </Stack>
-          )}
+          <TabsContent value="integrations">
+            <Card><CardHeader><CardTitle>Integrations</CardTitle><CardDescription>Credentials are scoped to your account and encrypted in Supabase Vault.</CardDescription></CardHeader><CardContent className="space-y-6">
+              <section className="space-y-4"><div><h3 className="text-lg font-semibold">ReportPortal</h3></div>
+                <Field label="ReportPortal API URL"><Input value={dashboard.reportPortalApiUrl} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiUrl: event.target.value })} /></Field>
+                <StoredSecretField label="ReportPortal API key" configured={hasReportPortalKey} editing={changingReportPortalKey} value={dashboard.reportPortalApiKey || ""} onEditingChange={setChangingReportPortalKey} onChange={(reportPortalApiKey) => setDashboard({ ...dashboard, reportPortalApiKey })} />
+              </section>
+              <section className="space-y-4"><div><h3 className="text-lg font-semibold">TestRail <span className="font-normal text-muted-foreground">(optional)</span></h3></div>
+                <Field label="TestRail base URL"><Input value={dashboard.testRailBaseUrl || ""} onChange={(event) => setDashboard({ ...dashboard, testRailBaseUrl: event.target.value })} /></Field>
+                <Field label="TestRail API user"><Input value={dashboard.testRailApiUser || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiUser: event.target.value })} /></Field>
+                <StoredSecretField label="TestRail API key" configured={hasTestRailKey} editing={changingTestRailKey} value={dashboard.testRailApiKey || ""} optional onEditingChange={setChangingTestRailKey} onChange={(testRailApiKey) => setDashboard({ ...dashboard, testRailApiKey })} />
+              </section>
+              <Button onClick={saveDashboard} disabled={pending}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save integrations</Button>
+            </CardContent></Card>
+          </TabsContent>
 
-          {section === 1 && (
-            <Stack spacing={4} sx={{ p: { xs: 2, md: 3 } }}>
-              <Box>
-                <Typography variant="h5">Report defaults</Typography>
-                <Typography variant="body2" color="text.secondary">These values initialize the Project → Launch name → Run flow.</Typography>
-              </Box>
-              <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 2fr 1fr" }, gap: 2 }}>
-                <TextField label="Default project" value={dashboard.defaultProject} onChange={(event) => setDashboard({ ...dashboard, defaultProject: event.target.value })} required />
-                <TextField label="Default launch name" value={dashboard.defaultLaunchName} onChange={(event) => setDashboard({ ...dashboard, defaultLaunchName: event.target.value })} required />
-                <TextField label="History depth" type="number" value={dashboard.defaultHistoryDepth} slotProps={{ htmlInput: { min: 1, max: 30 } }} onChange={(event) => setDashboard({ ...dashboard, defaultHistoryDepth: Number(event.target.value) })} required />
-              </Box>
+          <TabsContent value="configuration">
+            <Card><CardHeader><CardTitle>Report source configuration</CardTitle><CardDescription>The active project is global. Launch, run, history, and configured ReportPortal fields remain selectable in Analysis.</CardDescription></CardHeader><CardContent className="space-y-8">
+              <div className="grid gap-4 md:grid-cols-[1fr_2fr_1fr]">
+                <Field label="Active ReportPortal project" description="Change rarely; applies across the platform."><Input value={dashboard.defaultProject} onChange={(event) => setDashboard({ ...dashboard, defaultProject: event.target.value })} /></Field>
+                <Field label="Default launch name"><Input value={dashboard.defaultLaunchName} onChange={(event) => setDashboard({ ...dashboard, defaultLaunchName: event.target.value })} /></Field>
+                <Field label="Default history depth"><Input type="number" min={1} max={30} value={dashboard.defaultHistoryDepth} onChange={(event) => setDashboard({ ...dashboard, defaultHistoryDepth: Number(event.target.value) })} /></Field>
+              </div>
+              <EditableSection title="ReportPortal custom fields" description="Every row becomes a filter in the Report Source block. Labels and ReportPortal parameters are entirely configurable." addLabel="Add report field" onAdd={() => setDashboard({ ...dashboard, reportFields: [...dashboard.reportFields, { key: "", label: "", reportPortalParameter: "filter.eq.", defaultValue: "", required: false }] })}>
+                {dashboard.reportFields.map((field, index) => <Card key={index} className="py-3"><CardContent className="grid items-end gap-3 md:grid-cols-[1fr_1.3fr_1.7fr_1.3fr_auto_auto]">
+                  <Field label="Key"><Input value={field.key} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) })} /></Field>
+                  <Field label="Label"><Input value={field.label} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} /></Field>
+                  <Field label="ReportPortal parameter"><Input value={field.reportPortalParameter} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, reportPortalParameter: event.target.value } : item) })} /></Field>
+                  <Field label="Default"><Input value={field.defaultValue} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, defaultValue: event.target.value } : item) })} /></Field>
+                  <label className="flex h-8 items-center gap-2 text-sm"><Checkbox checked={field.required} onCheckedChange={(checked) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, required: checked === true } : item) })} />Required</label>
+                  <Button variant="ghost" size="icon" aria-label="Remove report field" onClick={() => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 /></Button>
+                </CardContent></Card>)}
+              </EditableSection>
+              <EditableSection title="Advanced Cypress run fields" description="Allowlisted cypress.config.js values available in the Run dialog." addLabel="Add run field" onAdd={() => setDashboard({ ...dashboard, cypressConfigFields: [...dashboard.cypressConfigFields, { key: "", label: "", type: "string" }] })}>
+                {dashboard.cypressConfigFields.map((field, index) => <Card key={index} className="py-3"><CardContent className="grid items-end gap-3 md:grid-cols-[1fr_1.4fr_1fr_1fr_1fr_auto]">
+                  <Field label="Cypress key"><Input value={field.key} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) })} /></Field>
+                  <Field label="Label"><Input value={field.label} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} /></Field>
+                  <Field label="Type"><Select value={field.type} onValueChange={(value: "string" | "number" | "boolean") => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, type: value, minimum: undefined, maximum: undefined } : item) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["string", "number", "boolean"].map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></Field>
+                  <Field label="Minimum"><Input type="number" disabled={field.type !== "number"} value={field.minimum ?? ""} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, minimum: event.target.value === "" ? undefined : Number(event.target.value) } : item) })} /></Field>
+                  <Field label="Maximum"><Input type="number" disabled={field.type !== "number"} value={field.maximum ?? ""} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, maximum: event.target.value === "" ? undefined : Number(event.target.value) } : item) })} /></Field>
+                  <Button variant="ghost" size="icon" aria-label="Remove run field" onClick={() => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 /></Button>
+                </CardContent></Card>)}
+              </EditableSection>
+              <EditableSection title="Launch → profile mappings" description="First matching glob wins. Use * for any text and ? for one character." addLabel="Add mapping" onAdd={() => setDashboard({ ...dashboard, launchProfileMappings: [...dashboard.launchProfileMappings, { pattern: "*", profileId: profiles[0]?.id || "" }] })}>
+                {dashboard.launchProfileMappings.map((mapping, index) => <Card key={index} className="py-3"><CardContent className="grid items-end gap-3 md:grid-cols-[2fr_2fr_auto]">
+                  <Field label="Launch pattern"><Input value={mapping.pattern} onChange={(event) => setDashboard({ ...dashboard, launchProfileMappings: dashboard.launchProfileMappings.map((item, itemIndex) => itemIndex === index ? { ...item, pattern: event.target.value } : item) })} /></Field>
+                  <Field label="Cypress profile"><Select value={mapping.profileId} onValueChange={(profileId) => setDashboard({ ...dashboard, launchProfileMappings: dashboard.launchProfileMappings.map((item, itemIndex) => itemIndex === index ? { ...item, profileId } : item) })}><SelectTrigger><SelectValue placeholder="Choose profile" /></SelectTrigger><SelectContent>{profiles.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></Field>
+                  <Button variant="ghost" size="icon" aria-label="Remove launch mapping" onClick={() => setDashboard({ ...dashboard, launchProfileMappings: dashboard.launchProfileMappings.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 /></Button>
+                </CardContent></Card>)}
+                {!profiles.length && <Alert><AlertTitle>No profiles yet</AlertTitle><AlertDescription>Create a Cypress profile before adding mappings.</AlertDescription></Alert>}
+              </EditableSection>
+              <Button onClick={saveDashboard} disabled={pending}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save configuration</Button>
+            </CardContent></Card>
+          </TabsContent>
 
-              <EditableList title="Report fields" description="Each field becomes a dashboard input and a ReportPortal filter parameter." addLabel="Add report field" onAdd={() => setDashboard({ ...dashboard, reportFields: [...dashboard.reportFields, { key: "", label: "", reportPortalParameter: "filter.eq.", defaultValue: "", required: false }] })}>
-                {dashboard.reportFields.map((field, index) => (
-                  <Box key={index} sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1.4fr 1.7fr 1.4fr auto auto" }, gap: 1, alignItems: "center" }}>
-                    <TextField size="small" label="Field key" value={field.key} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) })} />
-                    <TextField size="small" label="Label" value={field.label} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} />
-                    <TextField size="small" label="ReportPortal parameter" value={field.reportPortalParameter} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, reportPortalParameter: event.target.value } : item) })} />
-                    <TextField size="small" label="Default value" value={field.defaultValue} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, defaultValue: event.target.value } : item) })} />
-                    <FormControlLabel control={<Checkbox checked={field.required} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, required: event.target.checked } : item) })} />} label="Required" />
-                    <IconButton aria-label="Remove report field" onClick={() => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.filter((_, itemIndex) => itemIndex !== index) })}><DeleteOutlineRounded /></IconButton>
-                  </Box>
-                ))}
-              </EditableList>
+          <TabsContent value="profiles">
+            <Card><CardHeader><CardTitle>Cypress profiles</CardTitle><CardDescription>Generic base URLs and typed environment variables. Sensitive string variables are write-only.</CardDescription></CardHeader><CardContent className="space-y-3">
+              {profiles.map((item) => <Card key={item.id} className="py-3"><CardContent className="flex items-center justify-between gap-3"><div className="min-w-0"><p className="font-semibold">{item.name}{item.isDefault ? " · Default" : ""}</p><p className="truncate text-xs text-muted-foreground">{item.baseUrl} · {item.variables.length} variables</p></div><div className="flex gap-1"><Button variant="ghost" size="icon-sm" onClick={() => openProfile(item)} aria-label={`Edit ${item.name}`}><Pencil /></Button><Button variant="ghost" size="icon-sm" aria-label={`Delete ${item.name}`} onClick={async () => { if (!window.confirm(`Delete ${item.name}?`)) return; try { await jsonRequest(`/api/settings/cypress-profiles/${item.id}`, { method: "DELETE" }); setProfiles((current) => current.filter(({ id }) => id !== item.id)); setDashboard((current) => ({ ...current, launchProfileMappings: current.launchProfileMappings.filter(({ profileId }) => profileId !== item.id) })); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to delete profile"); } }}><Trash2 /></Button></div></CardContent></Card>)}
+              {!profiles.length && <Alert><AlertTitle>No Cypress profiles</AlertTitle><AlertDescription>Create one to run selected specs.</AlertDescription></Alert>}
+              <Button onClick={() => openProfile()}><Plus />Add profile</Button>
+            </CardContent></Card>
+          </TabsContent>
+        </Tabs>
+      </main>
 
-              <EditableList title="Advanced Cypress run fields" description="Choose exactly which cypress.config.js keys users may override from the run dialog." addLabel="Add run field" onAdd={() => setDashboard({ ...dashboard, cypressConfigFields: [...dashboard.cypressConfigFields, { key: "", label: "", type: "string" }] })}>
-                {dashboard.cypressConfigFields.map((field, index) => (
-                  <Box key={index} sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1.5fr 1fr 1fr 1fr auto" }, gap: 1, alignItems: "center" }}>
-                    <TextField size="small" label="Cypress key" value={field.key} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) })} />
-                    <TextField size="small" label="Label" value={field.label} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} />
-                    <TextField size="small" select label="Type" value={field.type} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value as "string" | "number" | "boolean", minimum: undefined, maximum: undefined } : item) })}>{["string", "number", "boolean"].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField>
-                    <TextField size="small" label="Minimum" type="number" disabled={field.type !== "number"} value={field.minimum ?? ""} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, minimum: event.target.value === "" ? undefined : Number(event.target.value) } : item) })} />
-                    <TextField size="small" label="Maximum" type="number" disabled={field.type !== "number"} value={field.maximum ?? ""} onChange={(event) => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.map((item, itemIndex) => itemIndex === index ? { ...item, maximum: event.target.value === "" ? undefined : Number(event.target.value) } : item) })} />
-                    <IconButton aria-label="Remove run field" onClick={() => setDashboard({ ...dashboard, cypressConfigFields: dashboard.cypressConfigFields.filter((_, itemIndex) => itemIndex !== index) })}><DeleteOutlineRounded /></IconButton>
-                  </Box>
-                ))}
-              </EditableList>
-
-              <EditableList title="Launch → profile mappings" description="First matching rule wins. Use * for any text and ? for one character." addLabel="Add mapping" onAdd={() => setDashboard({ ...dashboard, launchProfileMappings: [...dashboard.launchProfileMappings, { pattern: "*", profileId: profiles[0]?.id || "" }] })}>
-                {dashboard.launchProfileMappings.map((mapping, index) => (
-                  <Box key={index} sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "2fr 2fr auto" }, gap: 1, alignItems: "center" }}>
-                    <TextField size="small" label="Launch name pattern" value={mapping.pattern} onChange={(event) => setDashboard({ ...dashboard, launchProfileMappings: dashboard.launchProfileMappings.map((item, itemIndex) => itemIndex === index ? { ...item, pattern: event.target.value } : item) })} />
-                    <TextField size="small" select label="Cypress profile" value={mapping.profileId} onChange={(event) => setDashboard({ ...dashboard, launchProfileMappings: dashboard.launchProfileMappings.map((item, itemIndex) => itemIndex === index ? { ...item, profileId: event.target.value } : item) })}>{profiles.map((item) => <MenuItem key={item.id} value={item.id}>{item.name}</MenuItem>)}</TextField>
-                    <IconButton aria-label="Remove launch mapping" onClick={() => setDashboard({ ...dashboard, launchProfileMappings: dashboard.launchProfileMappings.filter((_, itemIndex) => itemIndex !== index) })}><DeleteOutlineRounded /></IconButton>
-                  </Box>
-                ))}
-                {!profiles.length && <Alert severity="info">Create a Cypress profile before adding launch mappings.</Alert>}
-              </EditableList>
-              <Button startIcon={<SaveRounded />} variant="contained" loading={pending} onClick={saveDashboard} sx={{ alignSelf: "flex-start" }}>Save configuration</Button>
-            </Stack>
-          )}
-
-          {section === 2 && (
-            <Stack spacing={2} sx={{ p: { xs: 2, md: 3 } }}>
-              <Box>
-                <Typography variant="h5">Cypress profiles</Typography>
-                <Typography variant="body2" color="text.secondary">Profiles are generic base URLs plus typed environment variables. Mark sensitive string variables as secret.</Typography>
-              </Box>
-              {profiles.map((item) => (
-                <Paper key={item.id} variant="outlined" sx={{ p: 2 }}>
-                  <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", gap: 2 }}>
-                    <Box><Typography sx={{ fontWeight: 700 }}>{item.name}{item.isDefault ? " · Default" : ""}</Typography><Typography variant="caption" color="text.secondary">{item.baseUrl} · {item.variables.length} variables</Typography></Box>
-                    <Stack direction="row"><IconButton aria-label={`Edit ${item.name}`} onClick={() => openProfile(item)}><EditRounded /></IconButton><IconButton aria-label={`Delete ${item.name}`} onClick={async () => { if (!window.confirm(`Delete ${item.name}?`)) return; try { await jsonRequest(`/api/settings/cypress-profiles/${item.id}`, { method: "DELETE" }); setProfiles((current) => current.filter(({ id }) => id !== item.id)); setDashboard((current) => ({ ...current, launchProfileMappings: current.launchProfileMappings.filter(({ profileId }) => profileId !== item.id) })); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to delete profile"); } }}><DeleteOutlineRounded /></IconButton></Stack>
-                  </Stack>
-                </Paper>
-              ))}
-              {!profiles.length && <Alert severity="info">No Cypress profiles have been created yet.</Alert>}
-              <Button startIcon={<AddRounded />} variant="contained" onClick={() => openProfile()} sx={{ alignSelf: "flex-start" }}>Add profile</Button>
-            </Stack>
-          )}
-        </Paper>
-      </Container>
-
-      <Dialog open={profileOpen} onClose={() => !pending && setProfileOpen(false)} fullWidth maxWidth="md">
-        <DialogTitle>{editingId ? "Edit Cypress profile" : "Add Cypress profile"}</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField label="Profile name" value={profile.name} onChange={(event) => setProfile({ ...profile, name: event.target.value })} required />
-            <TextField label="Cypress base URL" value={profile.baseUrl} onChange={(event) => setProfile({ ...profile, baseUrl: event.target.value })} required />
-            <FormControlLabel control={<Checkbox checked={profile.isDefault} onChange={(event) => setProfile({ ...profile, isDefault: event.target.checked })} />} label="Default profile" />
-            <Box><Typography variant="h6">Environment variables</Typography><Typography variant="caption" color="text.secondary">Secret values are never returned to the browser. Leave an existing secret blank to keep it.</Typography></Box>
-            {profile.variables.map((variable, index) => (
-              <Box key={index} sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1.3fr 1fr 2fr auto auto" }, gap: 1, alignItems: "center" }}>
-                <TextField size="small" label="Variable key" value={variable.key} onChange={(event) => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) })} />
-                <FormControl size="small"><InputLabel>Type</InputLabel><Select label="Type" value={variable.type} disabled={variable.secret} onChange={(event) => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, type: event.target.value as "string" | "number" | "boolean" } : item) })}>{["string", "number", "boolean"].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</Select></FormControl>
-                {variable.type === "boolean" ? <FormControl size="small"><InputLabel>Value</InputLabel><Select label="Value" value={variable.value || ""} onChange={(event) => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item) })}><MenuItem value="true">true</MenuItem><MenuItem value="false">false</MenuItem></Select></FormControl> : <TextField size="small" label="Value" type={variable.secret ? "password" : variable.type === "number" ? "number" : "text"} value={variable.value || ""} onChange={(event) => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item) })} />}
-                <FormControlLabel control={<Checkbox checked={variable.secret} onChange={(event) => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, secret: event.target.checked, type: event.target.checked ? "string" : item.type } : item) })} />} label="Secret" />
-                <IconButton aria-label="Remove variable" onClick={() => setProfile({ ...profile, variables: profile.variables.filter((_, itemIndex) => itemIndex !== index) })}><DeleteOutlineRounded /></IconButton>
-              </Box>
-            ))}
-            <Button startIcon={<AddRounded />} variant="outlined" onClick={() => setProfile({ ...profile, variables: [...profile.variables, { key: "", type: "string", value: "", secret: false }] })} sx={{ alignSelf: "flex-start" }}>Add variable</Button>
-          </Stack>
+      <Dialog open={profileOpen} onOpenChange={(open) => !pending && setProfileOpen(open)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>{editingId ? "Edit Cypress profile" : "Add Cypress profile"}</DialogTitle><DialogDescription>Values are used to produce the environment override selected by a run.</DialogDescription></DialogHeader>
+          <div className="space-y-4">
+            <Field label="Profile name"><Input value={profile.name} onChange={(event) => setProfile({ ...profile, name: event.target.value })} /></Field>
+            <Field label="Cypress base URL"><Input value={profile.baseUrl} onChange={(event) => setProfile({ ...profile, baseUrl: event.target.value })} /></Field>
+            <label className="flex items-center gap-2 text-sm"><Checkbox checked={profile.isDefault} onCheckedChange={(checked) => setProfile({ ...profile, isDefault: checked === true })} />Default profile</label>
+            <div><h3 className="font-semibold">Environment variables</h3><p className="text-xs text-muted-foreground">Secret values never return to the browser. Leave an existing secret blank to preserve it.</p></div>
+            {profile.variables.map((variable, index) => <Card key={index} className="py-3"><CardContent className="grid items-end gap-3 md:grid-cols-[1.2fr_1fr_1.7fr_auto_auto]">
+              <Field label="Variable key"><Input value={variable.key} onChange={(event) => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) })} /></Field>
+              <Field label="Type"><Select value={variable.type} disabled={variable.secret} onValueChange={(type: "string" | "number" | "boolean") => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, type } : item) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{["string", "number", "boolean"].map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent></Select></Field>
+              <Field label="Value">{variable.type === "boolean" ? <Select value={variable.value || ""} onValueChange={(value) => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, value } : item) })}><SelectTrigger><SelectValue placeholder="Choose" /></SelectTrigger><SelectContent><SelectItem value="true">true</SelectItem><SelectItem value="false">false</SelectItem></SelectContent></Select> : <Input type={variable.secret ? "password" : variable.type === "number" ? "number" : "text"} value={variable.value || ""} onChange={(event) => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item) })} />}</Field>
+              <label className="flex h-8 items-center gap-2 text-sm"><Checkbox checked={variable.secret} onCheckedChange={(checked) => setProfile({ ...profile, variables: profile.variables.map((item, itemIndex) => itemIndex === index ? { ...item, secret: checked === true, type: checked === true ? "string" : item.type } : item) })} />Secret</label>
+              <Button variant="ghost" size="icon" onClick={() => setProfile({ ...profile, variables: profile.variables.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 /></Button>
+            </CardContent></Card>)}
+            <Button variant="outline" size="sm" onClick={() => setProfile({ ...profile, variables: [...profile.variables, { key: "", type: "string", value: "", secret: false }] })}><Plus />Add variable</Button>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setProfileOpen(false)} disabled={pending}>Cancel</Button><Button disabled={pending} onClick={async () => { setPending(true); setError(""); try { const result = await jsonRequest<{ profile: CypressProfileView }>(editingId ? `/api/settings/cypress-profiles/${editingId}` : "/api/settings/cypress-profiles", { method: editingId ? "PUT" : "POST", body: JSON.stringify(profile) }); setProfiles((current) => editingId ? current.map((item) => item.id === editingId ? result.profile : item).map((item) => ({ ...item, isDefault: result.profile.isDefault ? item.id === result.profile.id : item.isDefault })) : [...current.map((item) => ({ ...item, isDefault: result.profile.isDefault ? false : item.isDefault })), result.profile]); setProfileOpen(false); setMessage("Cypress profile saved securely."); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save profile"); } finally { setPending(false); } }}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save profile</Button></DialogFooter>
         </DialogContent>
-        <DialogActions><Button onClick={() => setProfileOpen(false)} disabled={pending}>Cancel</Button><Button variant="contained" loading={pending} onClick={async () => { setPending(true); setError(""); try { const result = await jsonRequest<{ profile: CypressProfileView }>(editingId ? `/api/settings/cypress-profiles/${editingId}` : "/api/settings/cypress-profiles", { method: editingId ? "PUT" : "POST", body: JSON.stringify(profile) }); setProfiles((current) => editingId ? current.map((item) => item.id === editingId ? result.profile : item).map((item) => ({ ...item, isDefault: result.profile.isDefault ? item.id === result.profile.id : item.isDefault })) : [...current.map((item) => ({ ...item, isDefault: result.profile.isDefault ? false : item.isDefault })), result.profile]); setProfileOpen(false); setMessage("Cypress profile saved securely."); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save profile"); } finally { setPending(false); } }}>Save profile</Button></DialogActions>
       </Dialog>
-    </ThemeProvider>
+    </>
   );
-}
-
-function EditableList({ title, description, addLabel, onAdd, children }: { title: string; description: string; addLabel: string; onAdd: () => void; children: React.ReactNode }) {
-  return <Stack spacing={1.5}><Box><Typography variant="h5">{title}</Typography><Typography variant="body2" color="text.secondary">{description}</Typography></Box>{children}<Button startIcon={<AddRounded />} variant="outlined" onClick={onAdd} sx={{ alignSelf: "flex-start" }}>{addLabel}</Button></Stack>;
 }

@@ -30,7 +30,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
   if (!dashboard) redirect("/settings?required=dashboard");
   const parameters = await searchParams;
   const sourceSelection = reportSelectionSchema.parse({
-    project: parameters.project || dashboard.settings.defaultProject,
+    project: dashboard.settings.defaultProject,
     launchName: parameters.launchName || dashboard.settings.defaultLaunchName,
     launchId: parameters.launchId,
     historyDepth: parameters.historyDepth || dashboard.settings.defaultHistoryDepth,
@@ -49,12 +49,10 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     listCypressProfiles(ownerKey),
   ]);
   if (
-    selection.project !== requestedSelection.project
-    || selection.launchName !== requestedSelection.launchName
+    selection.launchName !== requestedSelection.launchName
     || selection.launchId !== requestedSelection.launchId
   ) {
     redirect(`/?${new URLSearchParams({
-      project: selection.project,
       launchName: selection.launchName,
       ...(selection.launchId === undefined ? {} : { launchId: String(selection.launchId) }),
       historyDepth: String(selection.historyDepth),

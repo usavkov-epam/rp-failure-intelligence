@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Failure Intelligence is an authenticated, read-only analytics application for investigating failed automated tests stored in ReportPortal. It helps an authorized user select a ReportPortal project, launch name, specific completed run, configured report fields, and history depth; inspect failure patterns; and open the corresponding Cypress source, ReportPortal log, or TestRail case.
+Failure Intelligence is an authenticated, read-only analytics application for investigating failed automated tests stored in ReportPortal. It uses a persistent user-selected ReportPortal project as global context and lets an authorized user select a launch name, specific completed run, configured report fields, and history depth; inspect failure patterns; and open the corresponding Cypress source, ReportPortal log, or TestRail case.
 
 ReportPortal is the source of truth for failure data and analytics. Supabase persists Cypress workflow metadata and user-owned configuration; secret values use Supabase Vault authenticated encryption. The application contains no bundled report or fallback test data.
 
@@ -32,7 +32,7 @@ The application does not:
 ### Investigate a failed launch
 
 1. Sign in with GitHub.
-2. Select an accessible ReportPortal project.
+2. Confirm the active ReportPortal project shown in the global header, or change it in Settings.
 3. Select a completed launch name.
 4. Keep the latest completed run selected or choose a historical run. Historical selections display a warning.
 5. Enter any configured ReportPortal filter fields and choose a history depth.
@@ -41,7 +41,7 @@ The application does not:
 
 ### Share a report selection
 
-The project, launch name, launch ID, mapped filter values, and history depth are encoded as validated URL query parameters. An authorized colleague can open the URL and reproduce the exact run selection. Authentication is still required.
+The project is a persistent user setting and global context. Launch name, launch ID, mapped filter values, and history depth are encoded as validated URL query parameters. An authorized colleague using the same active project can open the URL and reproduce the exact run selection. Authentication is still required.
 
 ### Handle an empty result
 
@@ -84,9 +84,11 @@ flowchart LR
 | `src/lib/user-settings-schema.ts` | Validation boundary | HTTPS-only integrations, configurable ReportPortal/Cypress fields, launch mappings, and generic Cypress profile variables |
 | `src/lib/analytics.ts` | Domain logic | Convert ReportPortal history into rows, trends, metrics, and risk categories |
 | `src/lib/types.ts` | Internal contracts | Dashboard DTOs, ReportPortal response shapes, report selection types |
-| `src/components/Dashboard.tsx` | Client UI | Selectors, filters, DataGrid, links, metrics, empty states, and error toasts |
-| `src/components/RunsView.tsx` | Client UI | Durable run list, Realtime subscription, result links, and completion toasts |
+| `src/components/Dashboard.tsx` | Client UI | Settings-driven selectors, filters, links, metrics, empty states, and run controls |
+| `src/components/FailureTable.tsx` | Client UI | TanStack-powered shadcn table with global sorting, pagination, and row selection |
+| `src/components/RunsView.tsx` | Client UI | Durable run list, Realtime subscription, owner-scoped job/artifact details, and completion toasts |
 | `src/components/SettingsView.tsx` | Client UI | Secret write-only settings and named Cypress profile management |
+| `src/components/ui` | Component source | Repository-owned shadcn components backed by Radix primitives and Tailwind tokens |
 | `src/components/AppHeader.tsx` | Shared navigation | Analysis/runs navigation, refresh, source state, and sign-out controls |
 | `src/app/api/report-source/route.ts` | Authenticated selection API | Dependent launch-name and run discovery for the selected ReportPortal project |
 | `src/app/api/runs/route.ts` | Authenticated run API | User-scoped run listing and validated workflow dispatch |
@@ -104,7 +106,7 @@ sequenceDiagram
   participant G as GitHub API
   participant R as ReportPortal
 
-  U->>P: GET /?project=...&launchName=...&launchId=...
+  U->>P: GET /?launchName=...&launchId=...
   P->>A: Resolve encrypted session
   A->>G: Verify identity and optional allowed-org membership
   alt Not authorized
@@ -192,9 +194,9 @@ A report selection contains:
 - `field.<key>`: a value mapped by user settings to an allowed ReportPortal `filter.eq.*`, `filter.cnt.*`, or `filter.in.*` parameter.
 - `historyDepth`: number of historical launches, constrained to 1 through 30 by the ReportPortal API.
 
-Projects, launch names, and completed runs are discovered server-side. Changing project or launch name defaults to its latest completed run. Selecting an older run preserves its ID in the URL and displays a warning that the analysis is historical.
+Projects, launch names, and completed runs are discovered server-side. The active project comes from the authenticated user's persistent Settings; changing the launch name defaults to its latest completed run. Selecting an older run preserves its ID in the URL and displays a warning that the analysis is historical.
 
-The report-source form loads its choices as a dependent `Project → Launch name → Run` chain. A changed parent disables affected child controls while the authenticated selection API loads their options. Starting another parent change aborts the stale browser request; the visible Cancel action aborts the active request and restores the last settled selection. The report itself is not replaced until the user applies a complete selection.
+The report-source form loads its choices as a dependent `Launch name → Run` chain inside the global project context. A changed launch disables the run control while the authenticated selection API loads its options. Starting another launch change aborts the stale browser request; the visible Cancel action aborts the active request and restores the last settled selection. The report itself is not replaced until the user applies a complete selection.
 
 ReportPortal discovery, test-item, failure, and history requests traverse every advertised API page with bounded concurrency. The browser receives the complete analyzed row set; Data Grid sorting and filtering run client-side across all matching rows before UI pagination.
 
@@ -339,11 +341,11 @@ Override the script explicitly only for a deliberate alternate OAuth App configu
 
 ### UI
 
-- Follow the established MUI theme and compact operational layout.
+- Use repository-owned shadcn components, shared Tailwind tokens, and the compact operational layout.
 - Use selectors for finite server-discovered choices.
 - Use toasts for integration failures and `No data` for valid empty results.
 - Keep source, ReportPortal, and TestRail links visibly distinct and read-only.
-- Ensure controls and DataGrid remain usable on mobile and desktop widths.
+- Ensure controls and the TanStack/shadcn failure table remain usable on mobile and desktop widths.
 
 ### Security
 
@@ -367,18 +369,19 @@ Run the complete repository check before merging:
 pnpm check
 ```
 
-It currently runs 21 Vitest tests in four files, ESLint, legacy script syntax checks, and a production Next.js build.
+It currently runs 35 Vitest tests in seven files, ESLint, legacy script syntax checks, and a production Next.js build.
 
 For behavior changes, also validate the smallest relevant path:
 
 - Authentication: unauthenticated `/` redirects to `/signin`; OAuth uses the 8080 callback; logins outside the active mode's allowlist are rejected.
-- Report selection: changing project or launch name refreshes completed run choices and canonicalizes to the latest run; selecting an older run preserves its launch ID and displays a warning.
+- Report selection: changing the global project in Settings applies across the platform; changing launch name refreshes completed run choices and canonicalizes to the latest run; selecting an older run preserves its launch ID and displays a warning.
 - Live data: failures produce rows and metrics from the selected launch and configured ReportPortal filters only.
 - Empty data: a valid empty response shows `No data` and no error toast.
 - Error data: an API failure shows an error toast and no rows.
 - Source links: generated URLs use the configured owner, repository, and ref.
 - Cypress request validation: duplicate specs are deduplicated and all counts, paths, browsers, and timeouts remain within server and workflow bounds.
 - Cypress configuration: profile ownership is server-checked; the one-time Vault snapshot is consumed by the workflow; non-secret overrides remain within API and workflow bounds.
+- Completed-run details: the owner-scoped run record gates server-side GitHub job/artifact lookup and artifact redirects; the GitHub token is never exposed to the client.
 - Run tracking: `/api/runs` is authenticated and user-scoped; a valid signed webhook updates the matching row and causes one authenticated refresh on `/runs`.
 
 Existing Vitest coverage exercises analytics, Cypress run-request validation, and ordered pagination. New tests should prioritize full ReportPortal client contracts with mocked fetch responses, Auth.js authorization, the run API, webhook signature/filter behavior, Supabase repository failures, and browser states above.

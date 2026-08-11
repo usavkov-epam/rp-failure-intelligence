@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
-import { AppRouterCacheProvider } from "@mui/material-nextjs/v15-appRouter";
 import "./globals.css";
+import { Geist } from "next/font/google";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
   title: "Failure intelligence",
@@ -9,8 +14,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en">
-      <body><AppRouterCacheProvider>{children}</AppRouterCacheProvider></body>
+    <html lang="en" className={cn("font-sans", geist.variable)}>
+      <body><TooltipProvider>{children}<Toaster richColors /></TooltipProvider></body>
     </html>
   );
 }
