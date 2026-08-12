@@ -10,6 +10,7 @@ export function dashboardSettingsFormValue(
     testRailBaseUrl: settings?.testRailBaseUrl ?? defaults.testRailBaseUrl,
     testRailApiUser: settings?.testRailApiUser ?? defaults.testRailApiUser,
     testRailApiKey: "",
+    testRailCaseIdPattern: settings?.testRailCaseIdPattern ?? defaults.testRailCaseIdPattern,
     github: settings?.github ? {
       actions: settings.github.actions,
       source: settings.github.source,
@@ -19,7 +20,9 @@ export function dashboardSettingsFormValue(
     defaultProject: settings?.defaultProject ?? defaults.defaultProject,
     defaultLaunchName: settings?.defaultLaunchName ?? defaults.defaultLaunchName,
     defaultHistoryDepth: settings?.defaultHistoryDepth ?? defaults.defaultHistoryDepth,
+    specPathCopyFormat: settings?.specPathCopyFormat ?? defaults.specPathCopyFormat,
     reportFields: settings?.reportFields ?? defaults.reportFields,
+    classificationMappings: settings?.classificationMappings ?? defaults.classificationMappings,
     cypressConfigFields: settings?.cypressConfigFields ?? defaults.cypressConfigFields,
     launchProfileMappings: settings?.launchProfileMappings ?? defaults.launchProfileMappings,
     launchSourceMappings: settings?.launchSourceMappings ?? defaults.launchSourceMappings,

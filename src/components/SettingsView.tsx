@@ -15,9 +15,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { defaultCypressConfigFields, legacyReportFields } from "@/lib/configuration-mappings";
+import { defaultCypressConfigFields } from "@/lib/configuration-mappings";
 import { dashboardSettingsFormValue } from "@/lib/dashboard-settings-form";
-import { HTTP_STATUS } from "@/lib/domain-constants";
+import { HTTP_STATUS, SPEC_PATH_COPY_FORMAT, type SpecPathCopyFormat } from "@/lib/domain-constants";
 import type { CypressProfileInput, CypressProfileView, DashboardSettingsInput, DashboardSettingsView, GitHubIntegrationInput } from "@/lib/user-settings-schema";
 import AppHeader from "./AppHeader";
 
@@ -27,10 +27,13 @@ const emptyDashboard: DashboardSettingsInput = {
   testRailBaseUrl: "",
   testRailApiUser: "",
   testRailApiKey: "",
+  testRailCaseIdPattern: "",
   defaultProject: "default",
   defaultLaunchName: "nightly",
   defaultHistoryDepth: 10,
-  reportFields: legacyReportFields,
+  specPathCopyFormat: SPEC_PATH_COPY_FORMAT.COMMA_SEPARATED,
+  reportFields: [],
+  classificationMappings: [],
   cypressConfigFields: defaultCypressConfigFields,
   launchProfileMappings: [],
   launchSourceMappings: [],
@@ -282,6 +285,7 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
                   <Field label="Default history depth"><Input type="number" min={1} max={30} value={dashboard.defaultHistoryDepth} onChange={(event) => setDashboard({ ...dashboard, defaultHistoryDepth: Number(event.target.value) })} /></Field>
                 </div>
               </>}
+              <section className="space-y-3"><div><h3 className="text-lg font-semibold">Platform preferences</h3><p className="text-sm text-muted-foreground">Control how dashboard actions format their output.</p></div><div className="max-w-sm"><Field label="Copied spec paths"><Select value={dashboard.specPathCopyFormat} onValueChange={(specPathCopyFormat: SpecPathCopyFormat) => setDashboard({ ...dashboard, specPathCopyFormat })}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value={SPEC_PATH_COPY_FORMAT.COMMA_SEPARATED}>Comma-separated</SelectItem><SelectItem value={SPEC_PATH_COPY_FORMAT.NEW_LINE_SEPARATED}>One path per line</SelectItem></SelectContent></Select></Field></div></section>
               <EditableSection title="ReportPortal custom fields" description="Every row becomes a typed filter in Report Source. Enum fields render as selections with your configured values." addLabel="Add report field" onAdd={() => setDashboard({ ...dashboard, reportFields: [...dashboard.reportFields, { key: "", label: "", reportPortalParameter: "filter.eq.", type: "text", options: [], defaultValue: "", required: false }] })}>
                 {dashboard.reportFields.map((field, index) => <Card key={index}><CardContent className="space-y-4">
                   <div className="grid items-end gap-3 md:grid-cols-[1fr_1.4fr_1fr_auto_auto]">
@@ -296,6 +300,13 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
                     {field.type === "enum" ? <EnumOptionsField options={field.options} onChange={(options) => setDashboard((current) => ({ ...current, reportFields: current.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, options, defaultValue: options.includes(item.defaultValue) ? item.defaultValue : "" } : item) }))} /> : <div />}
                     <Field label="Default value">{field.type === "enum" ? <Select value={field.defaultValue || "__none"} disabled={!field.options.length} onValueChange={(value) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, defaultValue: value === "__none" ? "" : value } : item) })}><SelectTrigger className="w-full"><SelectValue placeholder="No default" /></SelectTrigger><SelectContent><SelectItem value="__none">No default</SelectItem>{field.options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectContent></Select> : <Input value={field.defaultValue} onChange={(event) => setDashboard({ ...dashboard, reportFields: dashboard.reportFields.map((item, itemIndex) => itemIndex === index ? { ...item, defaultValue: event.target.value } : item) })} />}</Field>
                   </div>
+                </CardContent></Card>)}
+              </EditableSection>
+              <EditableSection title="Classification labels" description="Map raw ReportPortal issue or defect values to user-facing labels. Values without a mapping are displayed unchanged." addLabel="Add classification" onAdd={() => setDashboard({ ...dashboard, classificationMappings: [...dashboard.classificationMappings, { value: "", label: "" }] })}>
+                {dashboard.classificationMappings.map((mapping, index) => <Card key={index} className="py-3"><CardContent className="grid items-end gap-3 md:grid-cols-[1fr_1.5fr_auto]">
+                  <Field label="ReportPortal value"><Input value={mapping.value} placeholder="issue-type value" onChange={(event) => setDashboard({ ...dashboard, classificationMappings: dashboard.classificationMappings.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item) })} /></Field>
+                  <Field label="Display label"><Input value={mapping.label} placeholder="Readable classification" onChange={(event) => setDashboard({ ...dashboard, classificationMappings: dashboard.classificationMappings.map((item, itemIndex) => itemIndex === index ? { ...item, label: event.target.value } : item) })} /></Field>
+                  <Button variant="ghost" size="icon" aria-label="Remove classification mapping" onClick={() => setDashboard({ ...dashboard, classificationMappings: dashboard.classificationMappings.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 /></Button>
                 </CardContent></Card>)}
               </EditableSection>
               <EditableSection title="Advanced Cypress run fields" description="Allowlisted cypress.config.js values available in the Run dialog." addLabel="Add run field" onAdd={() => setDashboard({ ...dashboard, cypressConfigFields: [...dashboard.cypressConfigFields, { key: "", label: "", type: "string" }] })}>
@@ -349,7 +360,7 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
 
       <Dialog open={activeIntegration === INTEGRATION.TEST_RAIL} onOpenChange={(open) => !pending && !open && closeIntegration()}>
         <DialogContent><DialogHeader><DialogTitle className="flex items-center gap-2"><FlaskConical className="size-5" />TestRail<IntegrationHelp label="TestRail" documentationUrl="https://support.testrail.com/hc/en-us/articles/7077039051284-Accessing-the-TestRail-API"><p><strong className="text-foreground">Base URL:</strong> use the address you open to access TestRail, such as <code>https://company.testrail.io</code>.</p><p><strong className="text-foreground">API user:</strong> enter the email address of the TestRail user that owns the key.</p><p><strong className="text-foreground">API key:</strong> open <em>My Settings → API Keys</em>, add a named key, and copy it when generated.</p></IntegrationHelp></DialogTitle><DialogDescription>Optionally add links from failed tests to TestRail cases.</DialogDescription></DialogHeader>
-          <div className="space-y-4"><Field label="Base URL"><Input value={dashboard.testRailBaseUrl || ""} onChange={(event) => setDashboard({ ...dashboard, testRailBaseUrl: event.target.value })} placeholder="https://company.testrail.io" /></Field><Field label="API user"><Input value={dashboard.testRailApiUser || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiUser: event.target.value })} /></Field><StoredSecretField label="API key" configured={hasTestRailKey} editing={changingTestRailKey} value={dashboard.testRailApiKey || ""} optional onEditingChange={setChangingTestRailKey} onChange={(testRailApiKey) => setDashboard({ ...dashboard, testRailApiKey })} /></div>
+          <div className="space-y-4"><Field label="Base URL"><Input value={dashboard.testRailBaseUrl || ""} onChange={(event) => setDashboard({ ...dashboard, testRailBaseUrl: event.target.value })} placeholder="https://company.testrail.io" /></Field><Field label="Case ID pattern" description="Use {id} where the numeric TestRail case number appears in a test name. Example: CASE-{id}"><Input value={dashboard.testRailCaseIdPattern} onChange={(event) => setDashboard({ ...dashboard, testRailCaseIdPattern: event.target.value })} placeholder="CASE-{id}" /></Field><Field label="API user"><Input value={dashboard.testRailApiUser || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiUser: event.target.value })} /></Field><StoredSecretField label="API key" configured={hasTestRailKey} editing={changingTestRailKey} value={dashboard.testRailApiKey || ""} optional onEditingChange={setChangingTestRailKey} onChange={(testRailApiKey) => setDashboard({ ...dashboard, testRailApiKey })} /></div>
           <DialogFooter><Button variant="outline" onClick={closeIntegration} disabled={pending}>Cancel</Button><Button onClick={() => void saveDashboard(true)} disabled={pending}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save TestRail</Button></DialogFooter>
         </DialogContent>
       </Dialog>

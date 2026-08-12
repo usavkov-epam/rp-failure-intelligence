@@ -10,21 +10,21 @@ import {
 describe("configuration mappings", () => {
   it("resolves the first available launch glob mapping", () => {
     const available = new Set(["b8663d08-f48b-4d2d-8a89-4ef82ffae514"]);
-    expect(resolveLaunchProfileId("Nightly Eureka ECS", [
+    expect(resolveLaunchProfileId("Nightly UI containers", [
       { pattern: "nightly *", profileId: "00000000-0000-4000-8000-000000000000" },
-      { pattern: "*eureka*", profileId: "b8663d08-f48b-4d2d-8a89-4ef82ffae514" },
+      { pattern: "*ui*", profileId: "b8663d08-f48b-4d2d-8a89-4ef82ffae514" },
     ], available)).toBe("b8663d08-f48b-4d2d-8a89-4ef82ffae514");
   });
 
   it("overrides a source ref by launch while inheriting the default repository", () => {
     expect(resolveLaunchSourceRepository(
-      "Nightly Eureka release",
-      { owner: "folio-org", repository: "stripes-testing", ref: "main" },
+      "Nightly UI release",
+      { owner: "example", repository: "cypress-tests", ref: "main" },
       [
-        { pattern: "*eureka*", owner: "", repository: "", ref: "release/eureka" },
+        { pattern: "*ui*", owner: "", repository: "", ref: "release/ui" },
         { pattern: "*", owner: "other", repository: "other-tests", ref: "develop" },
       ],
-    )).toEqual({ owner: "folio-org", repository: "stripes-testing", ref: "release/eureka" });
+    )).toEqual({ owner: "example", repository: "cypress-tests", ref: "release/ui" });
   });
 
   it("can override the complete source repository for a matching launch", () => {

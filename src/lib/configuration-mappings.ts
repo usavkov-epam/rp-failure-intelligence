@@ -1,4 +1,4 @@
-import type { CypressConfigField, GitHubIntegrationInput, LaunchProfileMapping, LaunchSourceMapping, ReportFieldMapping } from "./user-settings-schema";
+import type { CypressConfigField, GitHubIntegrationInput, LaunchProfileMapping, LaunchSourceMapping } from "./user-settings-schema";
 
 const CYPRESS_CONFIG_LIMITS = {
   MIN_VIEWPORT: 320,
@@ -9,16 +9,6 @@ const CYPRESS_CONFIG_LIMITS = {
   MAX_RETRIES: 5,
   MAX_STRING_LENGTH: 500,
 } as const;
-
-export const legacyReportFields: ReportFieldMapping[] = [{
-  key: "cohort",
-  label: "Test name contains",
-  reportPortalParameter: "filter.cnt.name",
-  type: "text",
-  options: [],
-  defaultValue: "",
-  required: false,
-}];
 
 export const defaultCypressConfigFields: CypressConfigField[] = [
   { key: "viewportWidth", label: "Viewport width (px)", type: "number", minimum: CYPRESS_CONFIG_LIMITS.MIN_VIEWPORT, maximum: CYPRESS_CONFIG_LIMITS.MAX_VIEWPORT_WIDTH },

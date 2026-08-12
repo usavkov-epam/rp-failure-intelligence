@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { cypressRunRequestSchema } from "./cypress-run-request";
 
 const validRequest = {
-  launchName: "Nightly Eureka",
+  launchName: "Nightly UI",
   specs: ["cypress/e2e/invoices/example.cy.js"],
   runs: 5,
   threads: 2,

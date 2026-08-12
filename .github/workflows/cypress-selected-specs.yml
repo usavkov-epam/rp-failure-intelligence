@@ -174,7 +174,7 @@ jobs:
           }
           const escapeWorkflowCommand = (value) => String(value).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
           if (!snapshot.environment.env || Array.isArray(snapshot.environment.env) || typeof snapshot.environment.env !== 'object') throw new Error('Invalid Cypress profile environment');
-          const secretKeys = snapshot.environment.secretKeys || ['diku_password', 'EDGE_API_KEY'];
+          const secretKeys = snapshot.environment.secretKeys;
           if (!Array.isArray(secretKeys) || secretKeys.some((key) => typeof key !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) throw new Error('Invalid Cypress secret keys');
           for (const key of secretKeys) {
             const secret = snapshot.environment.env?.[key];

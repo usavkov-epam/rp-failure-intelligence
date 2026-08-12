@@ -2,7 +2,11 @@
 
 ## Product boundary
 
-ReportPortal is the source of truth for failure analytics. Failure intelligence normalizes its launches and test history, enriches failures with source links and optional TestRail data, and dispatches selected Cypress specs. It does not copy ReportPortal result history into its application database.
+ReportPortal is the source of truth for failure analytics. Failure intelligence normalizes its launches and test history, applies user-configured labels to raw ReportPortal classifications, enriches failures with source links and optional TestRail links, and dispatches selected Cypress specs. It does not copy ReportPortal result history into its application database.
+
+Classification values are not interpreted by built-in project rules. Settings map raw `issue.issueType` or defect-statistic keys to display labels; unmapped values remain visible as returned by ReportPortal. TestRail case links use a user-defined name pattern containing an `{id}` placeholder, so test names do not require a fixed prefix.
+
+Platform preferences are owner-scoped dashboard settings. Selected spec paths copy as a comma-separated list by default; users can switch the clipboard format to one path per line.
 
 Hosted mode is multi-user and authenticated through GitHub. DynamoDB holds only application configuration and run workflow state. Local mode is single-user, unauthenticated, and stores an encrypted envelope in a Docker volume.
 

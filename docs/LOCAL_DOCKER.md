@@ -39,7 +39,7 @@ The loopback address in the port mapping is intentional. Local mode has one impl
 2. Enter the ReportPortal API URL, including `/api/v1`, and its API key.
 3. Save the integration.
 4. Open **Configuration & mappings** and choose a default project and launch from the live ReportPortal response.
-5. Optionally configure ReportPortal fields, Cypress configuration fields, launch-to-profile mappings, TestRail, and Cypress profiles.
+5. Optionally configure ReportPortal fields, classification labels, Cypress configuration fields, launch-to-profile mappings, TestRail case-ID patterns, and Cypress profiles.
 
 Credentials are write-only after saving. The UI shows that a secret is configured but does not return its value to the browser.
 

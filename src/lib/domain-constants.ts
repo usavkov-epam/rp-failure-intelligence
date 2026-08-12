@@ -99,6 +99,13 @@ export const FORM_VALUE = {
   INHERIT: "inherit",
 } as const;
 
+export const SPEC_PATH_COPY_FORMAT = {
+  COMMA_SEPARATED: "comma-separated",
+  NEW_LINE_SEPARATED: "new-line-separated",
+} as const;
+
+export type SpecPathCopyFormat = typeof SPEC_PATH_COPY_FORMAT[keyof typeof SPEC_PATH_COPY_FORMAT];
+
 export const TIME = {
   MILLISECONDS_PER_SECOND: 1_000,
   SECONDS_PER_HOUR: 3_600,
@@ -188,6 +195,7 @@ export const VALIDATION_LIMITS = {
   SPEC_PATH_LENGTH: 300,
   REPORT_FIELDS: 12,
   FIELD_OPTIONS: 100,
+  CLASSIFICATION_MAPPINGS: 100,
   CYPRESS_CONFIG_FIELDS: 30,
   PROFILE_MAPPINGS: 50,
   SOURCE_MAPPINGS: 50,

@@ -29,7 +29,7 @@ describe("analyzeHistory", () => {
   it("maps current failures to links, classifications, and status analytics", () => {
     const history: HistoryEntry[] = [{
       resources: [
-        item(123, "FAILED", 10, { issue: { issueType: "ab_uvbcfwkvo3e8" } }),
+        item(123, "FAILED", 10, { name: "CASE-123 saves a record", issue: { issueType: "product_defect" } }),
         item(123, "PASSED", 9),
         item(123, "FAILED", 8),
       ],
@@ -41,15 +41,19 @@ describe("analyzeHistory", () => {
       "https://report.example.org",
       "project-name",
       99,
-      "https://testrail.example.org",
+      {
+        classificationMappings: [{ value: "product_defect", label: "Product defect" }],
+        testRailBaseUrl: "https://testrail.example.org",
+        testRailCaseIdPattern: "CASE-{id}",
+      },
     );
 
     expect(result.rows[0]).toMatchObject({
       id: 123,
-      caseId: "C123",
+      caseId: "CASE-123",
       specPath: "cypress/e2e/module/test-123.cy.js",
       module: "Module",
-      defect: "Flaky",
+      defect: "Product defect",
       passed: 1,
       failed: 2,
       executions: 3,
@@ -86,6 +90,7 @@ describe("analyzeHistory", () => {
       "https://report.example.org",
       "project",
       1,
+      { classificationMappings: [] },
     );
 
     expect(result.rows.map(({ risk }) => risk)).toEqual(["Persistent", "Isolated", "High risk"]);

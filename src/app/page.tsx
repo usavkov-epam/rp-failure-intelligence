@@ -50,14 +50,13 @@ export default async function Home({ searchParams }: PageProps<"/">) {
   const fields = Object.fromEntries(dashboard.settings.reportFields.map((field) => {
     const submitted = queryValue(parameters[`field.${field.key}`]);
     const requested = submitted === FORM_VALUE.REPORT_ANY ? undefined : submitted;
-    const legacyTeam = field.reportPortalParameter === "filter.cnt.name" ? queryValue(parameters.team) : undefined;
-    const value = (requested ?? legacyTeam ?? field.defaultValue).trim();
+    const value = (requested ?? field.defaultValue).trim();
     if (value.length > VALIDATION_LIMITS.FIELD_VALUE_LENGTH || (field.required && !value)) throw new Error(`Invalid value for ${field.label}`);
     if (field.type === "enum" && value && !field.options.includes(value)) throw new Error(`Invalid value for ${field.label}`);
     return [field.key, value];
   }));
   const requestedSelection = { ...sourceSelection, fields };
-  const connection = { ...dashboard.reportPortal, testRailBaseUrl: dashboard.testRailBaseUrl };
+  const connection = { ...dashboard.reportPortal, testRailBaseUrl: dashboard.testRailBaseUrl, testRailCaseIdPattern: dashboard.testRailCaseIdPattern };
   const [{ selection, options }, cypressProfiles] = await Promise.all([
     resolveReportSelection(connection, requestedSelection),
     listCypressProfiles(ownerKey),
@@ -81,13 +80,14 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     availableProfileIds,
   ) || cypressProfiles.find(({ isDefault }) => isDefault)?.id || cypressProfiles[0]?.id || "";
   return <Dashboard
-    initialData={await getDashboardData(connection, selection, dashboard.settings.reportFields)}
+    initialData={await getDashboardData(connection, selection, dashboard.settings.reportFields, dashboard.settings.classificationMappings)}
     reportSelection={selection}
     reportSourceOptions={options}
     sourceRepository={dashboard.settings.github ? resolveLaunchSourceRepository(selection.launchName, dashboard.settings.github.source, dashboard.settings.launchSourceMappings) : undefined}
     cypressProfiles={cypressProfiles.map(({ id, name, isDefault }) => ({ id, name, isDefault }))}
     reportFields={dashboard.settings.reportFields}
     cypressConfigFields={dashboard.settings.cypressConfigFields}
+    specPathCopyFormat={dashboard.settings.specPathCopyFormat}
     suggestedProfileId={suggestedProfileId}
     runner={getTestRunner().descriptor}
     runnerConfigured={config.isLocal || Boolean(dashboard.settings.github?.hasToken)}

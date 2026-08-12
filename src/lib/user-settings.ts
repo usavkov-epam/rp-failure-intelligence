@@ -9,10 +9,10 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 
 import { config } from "./config";
-import { defaultCypressConfigFields, legacyReportFields } from "./configuration-mappings";
+import { defaultCypressConfigFields } from "./configuration-mappings";
 import { getDynamoClient, getDynamoTableName } from "./dynamodb";
 import { ownerPartitionKey, profileSortKey, snapshotKey } from "./dynamodb-keys";
-import { DYNAMO_ENTITY, DYNAMO_KEY, TIME } from "./domain-constants";
+import { DYNAMO_ENTITY, DYNAMO_KEY, SPEC_PATH_COPY_FORMAT, TIME } from "./domain-constants";
 import { readLocalStore, updateLocalStore, type LocalProfileRecord } from "./local-store";
 import { decryptValue, encryptValue, type EncryptedValue } from "./secure-value";
 import type {
@@ -43,11 +43,7 @@ interface CypressProfileItem {
   updatedAt: string;
 }
 
-interface StoredCypressProfile extends Omit<CypressProfileSecret, "secretKeys"> {
-  secretKeys?: string[];
-  password?: string;
-  edgeApiKey?: string;
-}
+type StoredCypressProfile = CypressProfileSecret;
 
 function dashboardContext(ownerKey: string) {
   return `dashboard:${ownerKey}`;
@@ -58,22 +54,22 @@ function profileContext(ownerKey: string, profileId: string) {
 }
 
 function dashboardView(input: DashboardSettingsInput): DashboardSettingsView {
-  const storedReportFields = input.reportFields.length
-    ? input.reportFields
-    : legacyReportFields.map((field) => ({ ...field, defaultValue: "" }));
   return {
     configured: true,
     reportPortalApiUrl: input.reportPortalApiUrl,
     testRailBaseUrl: input.testRailBaseUrl || "",
     testRailApiUser: input.testRailApiUser || "",
+    testRailCaseIdPattern: input.testRailCaseIdPattern || "",
     defaultProject: input.defaultProject,
     defaultLaunchName: input.defaultLaunchName,
     defaultHistoryDepth: input.defaultHistoryDepth,
-    reportFields: storedReportFields.map((field) => ({
+    specPathCopyFormat: input.specPathCopyFormat || SPEC_PATH_COPY_FORMAT.COMMA_SEPARATED,
+    reportFields: input.reportFields.map((field) => ({
       ...field,
       type: field.type || "text" as const,
       options: field.options || [],
     })),
+    classificationMappings: input.classificationMappings || [],
     cypressConfigFields: input.cypressConfigFields || defaultCypressConfigFields,
     launchProfileMappings: input.launchProfileMappings || [],
     launchSourceMappings: input.launchSourceMappings || [],
@@ -123,6 +119,7 @@ export async function getDashboardConnection(ownerKey: string) {
       apiKey: stored.reportPortalApiKey || "",
     },
     testRailBaseUrl: stored.testRailBaseUrl?.replace(/\/$/, ""),
+    testRailCaseIdPattern: stored.testRailCaseIdPattern || "",
   };
 }
 
@@ -184,8 +181,7 @@ export async function saveDashboardSettings(ownerKey: string, input: DashboardSe
 }
 
 function storedSecretKeys(stored: StoredCypressProfile) {
-  if (stored.secretKeys) return stored.secretKeys;
-  return ["diku_password", "EDGE_API_KEY"].filter((key) => stored.env[key] !== undefined);
+  return stored.secretKeys;
 }
 
 function parseVariableValue(type: "string" | "number" | "boolean", value: string) {

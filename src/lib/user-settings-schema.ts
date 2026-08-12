@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { DISPLAY, VALIDATION_LIMITS } from "./domain-constants";
+import { DISPLAY, SPEC_PATH_COPY_FORMAT, VALIDATION_LIMITS } from "./domain-constants";
 
 const optionalSecret = z.string().max(VALIDATION_LIMITS.API_SECRET_LENGTH).optional();
 const optionalWebhookSecret = optionalSecret.refine(
@@ -72,6 +72,14 @@ export const reportFieldMappingSchema = z.object({
   }
 });
 
+export const classificationMappingSchema = z.object({
+  value: z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH),
+  label: z.string().trim().min(1).max(VALIDATION_LIMITS.LABEL_LENGTH),
+}).strict();
+
+const testRailCaseIdPattern = z.string().trim().max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH).default("")
+  .refine((pattern) => !pattern || pattern.split("{id}").length === 2, "Case ID pattern must contain {id} exactly once");
+
 export const cypressConfigFieldSchema = z.object({
   key: cypressConfigKey,
   label: z.string().trim().min(1).max(VALIDATION_LIMITS.LABEL_LENGTH),
@@ -112,22 +120,26 @@ export const dashboardSettingsInputSchema = z.object({
   testRailBaseUrl: httpsUrl.optional().or(z.literal("")),
   testRailApiUser: z.string().trim().max(VALIDATION_LIMITS.EMAIL_LENGTH).optional(),
   testRailApiKey: optionalSecret,
+  testRailCaseIdPattern,
   github: githubIntegrationSchema.optional(),
   defaultProject: z.string().trim().min(1).max(VALIDATION_LIMITS.KEY_LENGTH),
   defaultLaunchName: z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH),
   defaultHistoryDepth: z.number().int().min(1).max(Math.max(...DISPLAY.HISTORY_DEPTH_OPTIONS)),
+  specPathCopyFormat: z.enum([SPEC_PATH_COPY_FORMAT.COMMA_SEPARATED, SPEC_PATH_COPY_FORMAT.NEW_LINE_SEPARATED]).default(SPEC_PATH_COPY_FORMAT.COMMA_SEPARATED),
   reportFields: z.array(reportFieldMappingSchema).max(VALIDATION_LIMITS.REPORT_FIELDS).default([]),
+  classificationMappings: z.array(classificationMappingSchema).max(VALIDATION_LIMITS.CLASSIFICATION_MAPPINGS).default([]),
   cypressConfigFields: z.array(cypressConfigFieldSchema).max(VALIDATION_LIMITS.CYPRESS_CONFIG_FIELDS).default([]),
   launchProfileMappings: z.array(launchProfileMappingSchema).max(VALIDATION_LIMITS.PROFILE_MAPPINGS).default([]),
   launchSourceMappings: z.array(launchSourceMappingSchema).max(VALIDATION_LIMITS.SOURCE_MAPPINGS).default([]),
 }).strict().superRefine((settings, context) => {
-  for (const [path, values] of [
-    ["reportFields", settings.reportFields.map(({ key }) => key.toLowerCase())],
-    ["cypressConfigFields", settings.cypressConfigFields.map(({ key }) => key.toLowerCase())],
-    ["reportFields", settings.reportFields.map(({ reportPortalParameter }) => reportPortalParameter.toLowerCase())],
+  for (const [path, values, message] of [
+    ["reportFields", settings.reportFields.map(({ key }) => key.toLowerCase()), "Report field keys must be unique"],
+    ["cypressConfigFields", settings.cypressConfigFields.map(({ key }) => key.toLowerCase()), "Cypress field keys must be unique"],
+    ["reportFields", settings.reportFields.map(({ reportPortalParameter }) => reportPortalParameter.toLowerCase()), "ReportPortal parameters must be unique"],
+    ["classificationMappings", settings.classificationMappings.map(({ value }) => value), "Classification values must be unique"],
   ] as const) {
     if (new Set(values).size !== values.length) {
-      context.addIssue({ code: "custom", path: [path], message: "Field keys must be unique" });
+      context.addIssue({ code: "custom", path: [path], message });
     }
   }
 });
@@ -163,6 +175,7 @@ export const customCypressConfigSchema = z.record(cypressConfigKey, primitiveVal
 export type DashboardSettingsInput = z.infer<typeof dashboardSettingsInputSchema>;
 export type GitHubIntegrationInput = z.infer<typeof githubIntegrationSchema>;
 export type ReportFieldMapping = z.infer<typeof reportFieldMappingSchema>;
+export type ClassificationMapping = z.infer<typeof classificationMappingSchema>;
 export type CypressConfigField = z.infer<typeof cypressConfigFieldSchema>;
 export type LaunchProfileMapping = z.infer<typeof launchProfileMappingSchema>;
 export type LaunchSourceMapping = z.infer<typeof launchSourceMappingSchema>;

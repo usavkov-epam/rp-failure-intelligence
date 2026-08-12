@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultCypressConfigFields, legacyReportFields } from "./configuration-mappings";
+import { defaultCypressConfigFields } from "./configuration-mappings";
+import { SPEC_PATH_COPY_FORMAT } from "./domain-constants";
 import { dashboardSettingsFormValue } from "./dashboard-settings-form";
 import { dashboardSettingsInputSchema, type DashboardSettingsInput, type DashboardSettingsView } from "./user-settings-schema";
 
@@ -10,10 +11,13 @@ const defaults = {
   testRailBaseUrl: "",
   testRailApiUser: "",
   testRailApiKey: "",
+  testRailCaseIdPattern: "",
   defaultProject: "default",
   defaultLaunchName: "nightly",
   defaultHistoryDepth: 10,
-  reportFields: legacyReportFields,
+  specPathCopyFormat: SPEC_PATH_COPY_FORMAT.COMMA_SEPARATED,
+  reportFields: [],
+  classificationMappings: [],
   cypressConfigFields: defaultCypressConfigFields,
   launchProfileMappings: [],
   launchSourceMappings: [],

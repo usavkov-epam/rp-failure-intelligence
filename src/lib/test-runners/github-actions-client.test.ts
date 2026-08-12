@@ -17,7 +17,7 @@ describe("GitHubActionsClient", () => {
     const client = new GitHubActionsClient(configuration, request as typeof fetch);
 
     await client.dispatch("request-id", {
-      launchName: "Nightly Eureka",
+      launchName: "Nightly UI",
       specs: ["cypress/e2e/example.cy.ts"],
       runs: RUN_DEFAULTS.REPETITIONS,
       threads: RUN_DEFAULTS.THREADS,

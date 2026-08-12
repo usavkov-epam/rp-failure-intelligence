@@ -59,12 +59,10 @@ function toRecord(item: CypressRunItem): CypressRunRecord {
 }
 
 function normalizeLocalRecord(item: LocalRunRecord): LocalRunRecord {
-  // Local volumes may outlive image upgrades; map the former provider-specific URL field lazily.
-  const legacy = item as LocalRunRecord & { actionsUrl?: string };
   return {
     ...item,
     runner: item.runner || config.testRunner.kind,
-    runUrl: item.runUrl || legacy.actionsUrl || "/runs",
+    runUrl: item.runUrl || "/runs",
   };
 }
 

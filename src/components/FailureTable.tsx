@@ -12,15 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import type { FailureRow, Risk } from "@/lib/types";
-import { REPORT_STATUS, RISK } from "@/lib/domain-constants";
+import type { FailureRow } from "@/lib/types";
+import { REPORT_STATUS } from "@/lib/domain-constants";
+import { RISK_BACKGROUND_CLASS } from "@/lib/risk-presentation";
 
-const riskVariants: Record<Risk, "destructive" | "secondary" | "outline" | "default"> = {
-  [RISK.PERSISTENT]: "destructive",
-  [RISK.HIGH]: "secondary",
-  [RISK.INTERMITTENT]: "outline",
-  [RISK.ISOLATED]: "default",
-};
 const columnWidths: Record<string, string> = {
   select: "w-12",
   risk: "w-28",
@@ -48,7 +43,7 @@ export default function FailureTable({ rows, historyDepth, sourceRepository, onS
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const columns = useMemo<ColumnDef<FailureRow>[]>(() => [
     { id: "select", header: ({ table }) => <Checkbox aria-label="Select all visible failures" checked={table.getIsAllPageRowsSelected() ? true : table.getIsSomePageRowsSelected() ? "indeterminate" : false} onCheckedChange={(value) => table.toggleAllPageRowsSelected(Boolean(value))} />, cell: ({ row }) => <Checkbox aria-label={`Select ${row.original.name}`} checked={row.getIsSelected()} onCheckedChange={(value) => row.toggleSelected(Boolean(value))} />, enableSorting: false },
-    { accessorKey: "risk", header: "Risk", cell: ({ row }) => <Badge variant={riskVariants[row.original.risk]}>{row.original.risk}</Badge> },
+    { accessorKey: "risk", header: "Risk", cell: ({ row }) => <Badge variant="outline" className={cn("border-transparent text-white", RISK_BACKGROUND_CLASS[row.original.risk])}>{row.original.risk}</Badge> },
     { accessorKey: "name", header: "Failed test", cell: ({ row }) => <div className="min-w-0 py-1"><p className="line-clamp-2 break-words text-sm font-semibold leading-snug" title={row.original.name}>{row.original.name}</p><div className="mt-1 flex min-w-0 items-center gap-1"><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="icon-xs" onClick={() => navigator.clipboard.writeText(row.original.specPath)} aria-label="Copy spec path"><Clipboard /></Button></TooltipTrigger><TooltipContent>Copy spec path</TooltipContent></Tooltip><span className="min-w-0 truncate font-mono text-xs text-primary" title={row.original.specPath}>{row.original.specPath}</span></div></div> },
     { accessorKey: "module", header: "Module" },
     { accessorKey: "statuses", header: `Last ${historyDepth} runs`, cell: ({ row }) => <RecentRuns row={row.original} />, enableSorting: false },

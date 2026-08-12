@@ -9,8 +9,7 @@
     "start": "next start",
     "test": "vitest run",
     "lint": "eslint",
-    "check:legacy": "node --check scripts/legacy-dashboard/generate-dashboard.js && node --check scripts/legacy-dashboard/start-dashboard.js",
-    "check": "pnpm test && pnpm lint && pnpm check:legacy && pnpm build",
+    "check": "pnpm test && pnpm lint && pnpm build",
     "infra:synth": "cdk synth",
     "infra:diff": "cdk diff --all",
     "infra:deploy": "cdk deploy --all --require-approval broadening"

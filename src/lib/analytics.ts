@@ -8,13 +8,13 @@ import type {
   TrendPoint,
 } from "./types";
 import { ANALYTICS, REPORT_STATUS, RISK, TIME } from "./domain-constants";
+import type { ClassificationMapping } from "./user-settings-schema";
 
-const issueNames: Record<string, string> = {
-  ti001: "To investigate",
-  ab_uvbcfwkvo3e8: "Flaky",
-  to_investigate: "To investigate",
-  automation_bug: "Automation bug",
-};
+interface AnalysisConfiguration {
+  classificationMappings: ClassificationMapping[];
+  testRailBaseUrl?: string;
+  testRailCaseIdPattern?: string;
+}
 
 function getRisk(failed: number, executions: number): Risk {
   if (failed === executions) return RISK.PERSISTENT;
@@ -23,16 +23,26 @@ function getRisk(failed: number, executions: number): Risk {
   return RISK.INTERMITTENT;
 }
 
-function getDefect(item: ReportPortalItem): string {
+function getClassification(item: ReportPortalItem, mappings: ClassificationMapping[]): string {
   const issueType = item.issue?.issueType;
-  if (issueType) return issueNames[issueType] || issueType;
-  const defect = Object.keys(item.statistics?.defects || {})[0];
-  return issueNames[defect] || defect || "Unclassified";
+  const value = issueType || Object.keys(item.statistics?.defects || {})[0];
+  if (!value) return "Unclassified";
+  return mappings.find((mapping) => mapping.value === value)?.label || value;
 }
 
 function getSpecPath(codeRef?: string): string {
   const match = codeRef?.match(/^(.*?\.cy\.[cm]?[jt]sx?)(?:\/|$)/);
   return match?.[1] || "Spec path unavailable";
+}
+
+function extractTestRailCase(itemName: string, pattern?: string) {
+  if (!pattern) return null;
+  const expression = pattern
+    .split("{id}")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("(\\d+)");
+  const match = new RegExp(expression).exec(itemName);
+  return match?.[1] ? { id: match[0], number: match[1] } : null;
 }
 
 export function mergeCurrentFailuresWithHistory(
@@ -67,7 +77,7 @@ export function analyzeHistory(
   reportPortalBaseUrl: string,
   project: string,
   launchId: number,
-  testRailBaseUrl?: string,
+  configuration: AnalysisConfiguration,
 ): Pick<DashboardData, "rows" | "trend" | "metrics"> {
   const rows: FailureRow[] = history.map(({ resources }) => {
     const current = resources[0];
@@ -75,17 +85,17 @@ export function analyzeHistory(
     const passed = statuses.filter((status) => status === REPORT_STATUS.PASSED).length;
     const failed = statuses.filter((status) => status === REPORT_STATUS.FAILED).length;
     const firstNonFailure = statuses.findIndex((status) => status !== REPORT_STATUS.FAILED);
-    const caseMatch = current.name.match(/^C(\d+)/);
+    const testRailCase = extractTestRailCase(current.name, configuration.testRailCaseIdPattern);
 
     return {
       id: current.id,
       parentId: current.parent || 0,
       name: current.name,
-      caseId: caseMatch ? `C${caseMatch[1]}` : null,
-      caseNumber: caseMatch?.[1] || null,
+      caseId: testRailCase?.id || null,
+      caseNumber: testRailCase?.number || null,
       specPath: getSpecPath(current.codeRef),
       module: current.pathNames?.itemPaths?.[0]?.name || "Other",
-      defect: getDefect(current),
+      defect: getClassification(current, configuration.classificationMappings),
       duration: Math.max(0, Math.round(((current.endTime || current.startTime) - current.startTime) / TIME.MILLISECONDS_PER_SECOND)),
       passed,
       failed,
@@ -102,8 +112,8 @@ export function analyzeHistory(
       statuses: [...statuses].reverse(),
       launchNumbers: [...resources].reverse().map((resource) => resource.pathNames?.launchPathName?.number || 0),
       reportPortalUrl: `${reportPortalBaseUrl}/ui/#${project}/launches/all/${launchId}/${current.parent}/${current.id}/log`,
-      testRailUrl: caseMatch
-        ? `${testRailBaseUrl || "https://example.testrail.io"}/index.php?/cases/view/${caseMatch[1]}`
+      testRailUrl: testRailCase && configuration.testRailBaseUrl
+        ? `${configuration.testRailBaseUrl}/index.php?/cases/view/${encodeURIComponent(testRailCase.number)}`
         : null,
     };
   });

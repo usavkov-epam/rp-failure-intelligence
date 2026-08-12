@@ -5,7 +5,7 @@ import { collectAllPages, type PageResult } from "./pagination";
 import { normalizeReportPortalProjectNames } from "./reportportal-projects";
 import type { DashboardData, HistoryEntry, ReportPortalItem, ReportSelection, ReportSourceOptions } from "./types";
 import { REPORT_PORTAL, REPORT_STATUS } from "./domain-constants";
-import type { ReportFieldMapping } from "./user-settings-schema";
+import type { ClassificationMapping, ReportFieldMapping } from "./user-settings-schema";
 
 type Page<T> = PageResult<T>;
 
@@ -21,6 +21,7 @@ export interface ReportPortalConnection {
   apiUrl: string;
   apiKey: string;
   testRailBaseUrl?: string;
+  testRailCaseIdPattern?: string;
 }
 
 export async function loadReportPortalProjects(connection: ReportPortalConnection) {
@@ -203,7 +204,7 @@ export async function loadReportSourceChildren(connection: ReportPortalConnectio
   return { launchName, launches, launchRuns };
 }
 
-async function loadLiveData(connection: ReportPortalConnection, selection: ReportSelection, fields: ReportFieldMapping[]): Promise<DashboardData> {
+async function loadLiveData(connection: ReportPortalConnection, selection: ReportSelection, fields: ReportFieldMapping[], classificationMappings: ClassificationMapping[]): Promise<DashboardData> {
   const { project, launchName, launchId, historyDepth } = selection;
   const launchPage = await fetchAllPages<Launch>(connection, project, "launch", {
     "filter.eq.name": launchName,
@@ -242,7 +243,11 @@ async function loadLiveData(connection: ReportPortalConnection, selection: Repor
 
   const reportPortalBaseUrl = new URL(connection.apiUrl).origin;
   return {
-    ...analyzeHistory(failureHistory, suite.content, reportPortalBaseUrl, project, launch.id, connection.testRailBaseUrl),
+    ...analyzeHistory(failureHistory, suite.content, reportPortalBaseUrl, project, launch.id, {
+      classificationMappings,
+      testRailBaseUrl: connection.testRailBaseUrl,
+      testRailCaseIdPattern: connection.testRailCaseIdPattern,
+    }),
     meta: {
       project,
       launchName,
@@ -257,9 +262,9 @@ async function loadLiveData(connection: ReportPortalConnection, selection: Repor
   };
 }
 
-export async function getDashboardData(connection: ReportPortalConnection, selection: ReportSelection, fields: ReportFieldMapping[]): Promise<DashboardData> {
+export async function getDashboardData(connection: ReportPortalConnection, selection: ReportSelection, fields: ReportFieldMapping[], classificationMappings: ClassificationMapping[]): Promise<DashboardData> {
   try {
-    return await loadLiveData(connection, selection, fields);
+    return await loadLiveData(connection, selection, fields, classificationMappings);
   } catch (error) {
     return errorData(selection, fields, error instanceof Error ? error.message : "Unable to load live ReportPortal data");
   }

@@ -5,7 +5,7 @@ Failure intelligence is a project-agnostic ReportPortal dashboard for exploring 
 ## Capabilities
 
 - ReportPortal project and launch analysis with sortable, filterable failure history.
-- User-owned ReportPortal, TestRail, and GitHub integrations, custom report fields, launch mappings, test-source mappings, and reusable Cypress profiles.
+- User-owned ReportPortal, TestRail, and GitHub integrations, custom report fields, classification labels, launch mappings, test-source mappings, and reusable Cypress profiles.
 - Encrypted configuration and one-time run snapshots in DynamoDB.
 - GitHub Actions dispatch and signed webhook tracking in hosted mode.
 - DynamoDB Streams, Lambda, and Web Push for event-driven run updates without browser polling.
