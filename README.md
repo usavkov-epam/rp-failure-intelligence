@@ -5,7 +5,7 @@ Failure intelligence is a project-agnostic ReportPortal dashboard for exploring 
 ## Capabilities
 
 - ReportPortal project and launch analysis with sortable, filterable failure history.
-- User-owned ReportPortal/TestRail integrations, custom report fields, launch mappings, and reusable Cypress profiles.
+- User-owned ReportPortal, TestRail, and GitHub integrations, custom report fields, launch mappings, test-source mappings, and reusable Cypress profiles.
 - Encrypted configuration and one-time run snapshots in DynamoDB.
 - GitHub Actions dispatch and signed webhook tracking in hosted mode.
 - DynamoDB Streams, Lambda, and Web Push for event-driven run updates without browser polling.
@@ -19,10 +19,8 @@ The hosted app is deployed separately from its AWS data layer:
 1. Vercel runs the Next.js application and Auth.js GitHub sign-in.
 2. Vercel exchanges its OIDC token for short-lived AWS credentials scoped to the production project. No AWS access key is stored in Vercel.
 3. A single provisioned DynamoDB table stores encrypted settings, profiles, one-time snapshots, run metadata, and browser push subscriptions.
-4. GitHub sends signed `workflow_run` webhooks to the existing Next.js route.
+4. GitHub sends signed `workflow_run` webhooks to the Next.js webhook route.
 5. DynamoDB Streams invokes a notifier Lambda. It sends Web Push messages to registered browsers; an SQS queue receives records that exhaust retries.
-
-There is no Supabase dependency, database migration, API Gateway, AppSync, VPC, NAT gateway, EventBridge, SNS, custom KMS key, or DynamoDB backup/PITR configuration.
 
 See [AWS infrastructure](docs/AWS_INFRASTRUCTURE.md) for provisioning, [engineering notes](docs/ENGINEERING.md) for security and data flow, [runner extensions](docs/TEST_RUNNERS.md), and [code quality conventions](docs/CODE_QUALITY.md).
 
@@ -40,11 +38,17 @@ Use `pnpm check` before requesting a commit. The CDK application can be checked 
 
 ## Local Docker
 
-The `local` image needs only Docker and ReportPortal credentials. It has no GitHub OAuth, GitHub Actions, Supabase, DynamoDB, Lambda, or Vercel dependency. Settings and run data are application-encrypted in the mounted Docker volume.
+The `local` image runs the application and Cypress CLI on a developer workstation. Supply the Cypress repository URL and ref when starting it, then configure ReportPortal and Cypress profiles in the UI. Settings and run data are application-encrypted in the mounted Docker volume.
 
 ```bash
-docker compose pull
-docker compose up -d
+docker run -d \
+  --name failure-intelligence \
+  --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 \
+  -v failure-intelligence-data:/data \
+  -e LOCAL_RUNNER_REPOSITORY_URL=https://github.com/example/cypress-project.git \
+  -e LOCAL_RUNNER_REF=main \
+  ghcr.io/usavkov-epam/rp-failure-intelligence:local
 ```
 
 Open `http://localhost:8080`, configure ReportPortal in Settings, create a Cypress profile, and use **Run selected**. The container clones the source repository and executes the configured Cypress command itself.

@@ -1,8 +1,8 @@
 # Local Docker Guide
 
-This guide describes the self-contained, single-user Failure Intelligence image intended for a developer workstation. It does not require Node.js, pnpm, GitHub OAuth, Supabase, a database, an environment file, or a manually generated encryption key.
+This guide describes the self-contained, single-user Failure Intelligence image intended for a developer workstation. Docker is the only workstation prerequisite. The container generates its local encryption key, stores application data in a Docker volume, and executes Cypress directly.
 
-ReportPortal remains the application's data source, so a developer needs a ReportPortal URL and API key to load real reports. Local mode does not use GitHub OAuth, GitHub Actions, GitHub webhooks, OIDC, or Supabase.
+The developer supplies a Cypress repository URL and Git ref when starting the container. A ReportPortal URL and API key are configured in the UI after startup.
 
 ## Image variants
 
@@ -24,28 +24,14 @@ docker run -d \
   --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -v failure-intelligence-data:/data \
+  -e LOCAL_RUNNER_REPOSITORY_URL=https://github.com/example/cypress-project.git \
+  -e LOCAL_RUNNER_REF=main \
   ghcr.io/usavkov-epam/rp-failure-intelligence:local
 ```
 
 Open [http://localhost:8080](http://localhost:8080). There is no sign-in screen in local mode.
 
 The loopback address in the port mapping is intentional. Local mode has one implicit user and must not be exposed to a LAN, public interface, ingress, or reverse proxy.
-
-### Start with Compose
-
-When the repository is available locally, its `compose.yaml` provides the same setup:
-
-```bash
-docker compose up -d
-```
-
-Change only the host port when `8080` is already occupied:
-
-```bash
-DASHBOARD_PORT=8081 docker compose up -d
-```
-
-Then open `http://localhost:8081`.
 
 ## First-time configuration
 
@@ -118,9 +104,9 @@ Active and queued runs can be cancelled from the Runs page. The runner terminate
 
 The temporary `environments.js` can contain Cypress secrets. It is created with owner-only permissions and removed after success, failure, cancellation, and container startup recovery.
 
-### Select another Cypress repository
+### Select the Cypress repository
 
-The default repository and ref match the configured source-link repository (`folio-org/stripes-testing`, `master`). Override them when starting the container:
+`LOCAL_RUNNER_REPOSITORY_URL` and `LOCAL_RUNNER_REF` select the repository cloned by the local runner. Both values are required when starting or recreating the container:
 
 ```bash
 docker run -d \
@@ -133,7 +119,7 @@ docker run -d \
   ghcr.io/usavkov-epam/rp-failure-intelligence:local
 ```
 
-The repository must contain one supported lockfile and a Cypress dependency. Public HTTPS repositories work without credentials. Private-repository authentication is intentionally not stored as a container environment variable in the current local runner.
+The repository must contain one supported lockfile and a Cypress dependency. Public HTTPS repositories work without credentials. The local runner does not accept private-repository credentials through application settings.
 
 To avoid a remote Git source, mount an existing local Git repository read-only:
 
@@ -162,17 +148,12 @@ docker run -d \
   --restart unless-stopped \
   -p 127.0.0.1:8080:8080 \
   -v failure-intelligence-data:/data \
+  -e LOCAL_RUNNER_REPOSITORY_URL=https://github.com/example/cypress-project.git \
+  -e LOCAL_RUNNER_REF=main \
   ghcr.io/usavkov-epam/rp-failure-intelligence:local
 ```
 
 Settings and profiles remain in the named volume. For reproducible testing, replace `local` with an immutable `local-sha-<commit>` tag.
-
-With Compose:
-
-```bash
-docker compose pull
-docker compose up -d
-```
 
 ## Back up and restore
 
@@ -203,9 +184,9 @@ docker run --rm \
 
 Treat the backup archive as a secret: it includes the encryption key and can be decrypted by someone with the application code.
 
-## No GitHub Actions integration
+## Hosted integrations in local mode
 
-The local image ignores GitHub Actions dispatch configuration and disables the workflow-profile and GitHub-webhook endpoints. It needs no Actions token, webhook secret, public HTTPS callback, tunnel, repository variable, or OAuth application. Hosted/production mode retains the existing GitHub Actions workflow.
+The local runner executes Cypress in the container. GitHub Actions dispatch, workflow-profile delivery, GitHub webhooks, OAuth login, and Web Push are disabled in local mode. GitHub source configuration saved in Settings can still be used to generate source links, but it does not select the repository executed by the local runner; the two required `LOCAL_RUNNER_*` variables do that.
 
 ## Troubleshooting
 
@@ -241,7 +222,7 @@ Download `logs/setup.log` from the run details. It contains the Git clone/update
 
 ### Cypress cannot start
 
-Download the execution log from run details. The image contains Cypress Linux prerequisites, Chromium, and Xvfb, but the Cypress package and binary version come from the selected project. Very old Cypress releases may not support the image's Node.js version or CPU architecture.
+Download the execution log from run details. The image contains Cypress Linux prerequisites, Chromium, and Xvfb, but the Cypress package and binary version come from the selected project. Confirm that the project's Cypress release supports the image's Node.js version and CPU architecture.
 
 ## Remove local mode
 

@@ -20,7 +20,7 @@ flowchart LR
   Lambda -->|failed stream records| DLQ[SQS DLQ]
 ```
 
-The webhook remains a Next.js route because GitHub already needs the public application URL. Adding API Gateway or another public Lambda would duplicate an endpoint and introduce another priced service. A run update written by the webhook reaches the browser through the DynamoDB stream, so the browser does not poll in hosted mode. Returning to a visible tab performs one reconciliation request in case a push was missed.
+The webhook is a Next.js route at the public application URL. A run update written by the webhook reaches the browser through the DynamoDB stream, so the browser does not poll in hosted mode. Returning to a visible tab performs one reconciliation request in case a push was missed.
 
 Local mode keeps a five-second Runs-page refresh because execution occurs in the container and there is no AWS event path.
 
@@ -39,15 +39,15 @@ One Standard-class provisioned table uses `pk` and `sk` string keys, a `NEW_IMAG
 
 No global secondary index is required. Settings/profile names and run metadata are not treated as credentials. ReportPortal/TestRail keys, profile environment content, and snapshot content are AES-256-GCM encrypted by `src/lib/secure-value.ts` before they leave the server. The owner/record context is authenticated additional data, preventing ciphertext from being moved between users or entity types.
 
-`DATA_ENCRYPTION_KEY` remains a server-only Vercel secret. Rotating it currently requires an explicit application-level re-encryption procedure; replacing it without re-encryption makes existing encrypted records unreadable. This project intentionally has no Supabase migration compatibility because the AWS implementation is a clean replacement.
+`DATA_ENCRYPTION_KEY` is a server-only Vercel secret. Rotating it requires an application-level re-encryption procedure; replacing it without re-encryption makes encrypted records unreadable.
 
 ## Identity and authorization
 
 - Auth.js issues encrypted JWT sessions after GitHub OAuth and organization/user allowlist checks.
-- The immutable GitHub login-derived owner key scopes every settings, profile, run, and subscription operation.
+- The immutable GitHub numeric user ID forms the owner key that scopes every settings, profile, run, and subscription operation.
 - Vercel obtains AWS credentials with its OIDC token. The IAM trust policy matches the Vercel team, project, and production environment exactly.
 - The Vercel role can read/write only the application table. No permanent AWS access key is configured.
-- GitHub workflow profile delivery still validates the short-lived GitHub Actions OIDC identity, repository, workflow, branch, event, and GitHub-hosted runner before consuming a snapshot.
+- GitHub workflow profile delivery validates the short-lived GitHub Actions OIDC identity, repository, workflow, branch, event, and GitHub-hosted runner before consuming a snapshot.
 - The GitHub webhook validates its HMAC SHA-256 signature, repository, workflow path, and request UUID before updating a run.
 
 ## Web Push
@@ -64,7 +64,7 @@ The CDK templates deliberately provision only:
 - one 256 MB Lambda invoked by DynamoDB Streams;
 - one SQS Standard DLQ;
 - one CloudWatch log group with seven-day retention;
-- one IAM OIDC provider and role; and
+- a Vercel OIDC provider and application role, plus a GitHub OIDC provider and deployment role; and
 - the CDK bootstrap S3 bucket/assets required by CDK.
 
 This configuration is designed for a low-volume application to stay inside AWS monthly free-tier allowances, but AWS free quotas are shared across the payer account and overage is billable. Infrastructure code cannot guarantee a zero invoice. Configure AWS Budgets/free-tier alerts and monitor the account. S3 bootstrap storage is the acknowledged exception and may be billable depending on account eligibility and aggregate usage.

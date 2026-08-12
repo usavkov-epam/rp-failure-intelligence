@@ -1,6 +1,6 @@
 # AWS infrastructure setup
 
-This is a clean AWS deployment. Do not apply the removed Supabase migrations and do not copy Supabase data. The CDK application creates a DynamoDB table, a stream notifier Lambda, an SQS dead-letter queue, a Vercel OIDC role, and a narrowly scoped GitHub Actions deployment role.
+The CDK application creates a DynamoDB table, a stream notifier Lambda, an SQS dead-letter queue, a Vercel OIDC application role, and a narrowly scoped GitHub Actions deployment role.
 
 ## 1. Generate Web Push keys
 
@@ -29,7 +29,7 @@ CDK needs its standard bootstrap S3 bucket and deployment roles. This is the ack
 pnpm exec cdk bootstrap aws://<account-id>/<region>
 ```
 
-Delete old CDK assets periodically if account policy does not already manage them.
+Apply a lifecycle policy to the CDK bootstrap bucket when the account does not already manage asset retention.
 
 ## 3. Synthesize and review
 
@@ -94,13 +94,22 @@ Set `VERCEL_OIDC_PROVIDER_ARN` or `GITHUB_OIDC_PROVIDER_ARN` only when the corre
 
 The **AWS infrastructure** workflow is manual-only. Select `deploy` to show the CDK diff and deploy every stack. Select `destroy` and type `DESTROY` exactly to destroy the CloudFormation stacks. The protected GitHub environment provides the human approval gate, allowing the non-interactive CDK deploy command to use `--require-approval never` safely.
 
-Destroy intentionally retains the DynamoDB table. It also leaves the CDK bootstrap bucket/roles, the SSM Web Push private-key parameter, GitHub variables, and the GitHub environment in place. Remove those explicitly only when their retained data and shared use have been reviewed.
+Destroy intentionally retains the DynamoDB table. It also leaves the CDK bootstrap bucket and roles, the SSM Web Push private-key parameter, GitHub variables, and the GitHub environment in place. Remove those resources explicitly only after reviewing their data and shared use.
 
 ## 6. Configure Vercel
 
-Copy the CDK outputs to Vercel production environment variables:
+Configure these Vercel production environment variables. Values labeled as outputs come from CDK:
 
 ```text
+APP_MODE=hosted
+TEST_RUNNER=github-actions
+AUTH_SECRET=<new random Auth.js secret>
+AUTH_GITHUB_ID=<GitHub OAuth App client ID>
+AUTH_GITHUB_SECRET=<GitHub OAuth App client secret>
+AUTHORIZATION_MODE=organization
+AUTH_ALLOWED_ORGS=<comma-separated GitHub organizations>
+AUTH_ALLOWED_USERS=
+AUTH_TRUST_HOST=true
 AWS_REGION=<AwsRegion output>
 AWS_DYNAMODB_TABLE=<DynamoDbTableName output>
 AWS_ROLE_ARN=<ApplicationRoleArn output>
@@ -108,13 +117,13 @@ WEB_PUSH_PUBLIC_KEY=<WebPushPublicKey output>
 DATA_ENCRYPTION_KEY=<new random value of at least 32 characters>
 ```
 
-`DATA_ENCRYPTION_KEY` is a server secret. Generate it independently and never put it in CDK output, source control, or browser-visible variables. Vercel automatically supplies its OIDC token; do not add `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`.
+For explicit-user authorization, set `AUTHORIZATION_MODE=users`, populate `AUTH_ALLOWED_USERS`, and leave `AUTH_ALLOWED_ORGS` empty. At least one value is required in the selected allowlist. `DATA_ENCRYPTION_KEY` and `AUTH_SECRET` are independent server secrets. Never put either value in CDK output, source control, or browser-visible variables. Vercel automatically supplies its OIDC token.
 
-Keep the existing hosted variables for Auth.js and GitHub OAuth. GitHub Actions dispatch, source links, and webhook credentials are configured per user in the application. Remove their former deployment variables (`GITHUB_ACTIONS_*`, `GITHUB_SOURCE_*`, and `GITHUB_WEBHOOK_SECRET`) together with all old `NEXT_PUBLIC_SUPABASE_*` and `SUPABASE_*` variables.
+GitHub Actions dispatch, test-source repositories, source links, and webhook credentials are configured per user under **Settings → Integrations → GitHub**. ReportPortal and TestRail credentials are also configured in Settings rather than deployment variables.
 
 ## 7. GitHub webhook
 
-Keep the GitHub App/repository `workflow_run` webhook pointed at:
+Create a repository webhook for the `workflow_run` event at:
 
 ```text
 https://<application-host>/api/webhooks/github

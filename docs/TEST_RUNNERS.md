@@ -14,20 +14,20 @@ Every runner provides:
 - cancellation behavior; and
 - explicit capability flags for cancellation and external run pages.
 
-The current implementations are:
+The registered runners are:
 
 | Kind | Implementation | Execution model |
 | --- | --- | --- |
 | `github-actions` | `src/lib/test-runners/github-actions.ts` | Remote workflow dispatch, webhook status, GitHub jobs/artifacts |
 | `local-cli` | `src/lib/test-runners/local-cli.ts` | Queued child processes inside the local Docker container |
 
-GitHub HTTP details live in `github-actions-client.ts`; they do not leak into route handlers. Local process management remains in `local-cypress-runner.ts`; its adapter translates the process runner into the shared contract.
+GitHub HTTP details live in `github-actions-client.ts`; they do not leak into route handlers. Local process management lives in `local-cypress-runner.ts`; its adapter translates the process runner into the shared contract.
 
 ## GitHub Actions integration
 
 Each hosted user configures GitHub from **Settings → Integrations**. The encrypted owner-scoped record contains a fine-grained token, webhook secret, Actions repository/workflow/ref, and a separate source repository/ref. No Actions repository or test-source repository is fixed by deployment variables.
 
-Launch-specific test sources are configured under **Settings → Configuration & mappings → Launch → test source mappings**. Mappings use case-insensitive `*` and `?` globs and the first match wins. A mapping may override only the ref while inheriting the default source owner/repository, or override the complete source location. The server resolves the mapping from the current ReportPortal launch before dispatch, so browser input cannot supply an arbitrary repository or ref.
+Launch-specific test sources are configured under **Settings → Configuration & mappings → Launch → test source mappings**. Mappings use case-insensitive `*` and `?` globs and the first match wins. A mapping may override only the ref while inheriting the default source owner/repository, or override the complete source location. A run request includes the selected launch name; the server matches that name against the saved owner-scoped mappings and sends only the resolved repository and ref to GitHub Actions. The request cannot provide raw repository or ref values.
 
 The selected workflow must implement the `workflow_dispatch` inputs used by `github-actions-client.ts`, including `dashboard_base_url`, `source_owner`, `source_repository`, and `source_ref`. A compatible reference workflow is available at `.github/workflows/cypress-selected-specs.yml`. The application supplies its origin with every dispatch, so the Actions repository does not need a dashboard URL variable.
 
