@@ -93,6 +93,9 @@ importers:
       '@types/web-push':
         specifier: ^3.6.4
         version: 3.6.4
+      aws-cdk:
+        specifier: 2.1135.1
+        version: 2.1135.1
       aws-cdk-lib:
         specifier: ^2.264.0
         version: 2.264.0(constructs@10.8.1)
@@ -2213,6 +2216,11 @@ packages:
       - semver
       - yaml
       - mime-types
+
+  aws-cdk@2.1135.1:
+    resolution: {integrity: sha512-g1jcMfWlyYtGamFJ/kPBOCuchl3NfwTF2UwOLTIDN0nJbGm84EAO+c8DlYnaemM8UmKFkdoq4BGdmiNL5nHWwA==}
+    engines: {node: '>= 18.0.0'}
+    hasBin: true
 
   axe-core@4.13.0:
     resolution: {integrity: sha512-UzGt8zg7Ny8djbYMhxl2zuEevVa7r2gJjYY5Lwr1xM7+XU2nd6CkIWFTVcCIbAP63vSz71NaVyyuSk9lHKcy0A==}
@@ -6695,6 +6703,8 @@ snapshots:
       '@aws-cdk/asset-node-proxy-agent-v6': 2.1.2
       '@aws-cdk/cloud-assembly-schema': 54.17.0
       constructs: 10.8.1
+
+  aws-cdk@2.1135.1: {}
 
   axe-core@4.13.0: {}
 
