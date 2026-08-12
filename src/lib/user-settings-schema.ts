@@ -10,7 +10,7 @@ const optionalWebhookSecret = optionalSecret.refine(
 const httpsUrl = z.string().url().max(VALIDATION_LIMITS.URL_LENGTH).refine((value) => value.startsWith("https://"), "HTTPS URL required");
 const identifier = z.string().trim().min(1).max(VALIDATION_LIMITS.IDENTIFIER_LENGTH).regex(/^[A-Za-z][A-Za-z0-9_-]*$/);
 const environmentKey = z.string().trim().min(1).max(VALIDATION_LIMITS.KEY_LENGTH).regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
-const cypressConfigKey = z.string().trim().min(1).max(VALIDATION_LIMITS.KEY_LENGTH).regex(/^[a-z][A-Za-z0-9]*$/);
+const cypressConfigKey = z.string().trim().min(1).max(VALIDATION_LIMITS.KEY_LENGTH).regex(/^[a-z][A-Za-z0-9_]*$/);
 const blockedCypressConfigKeys = new Set([
   "baseurl", "env", "specpattern", "supportfile", "fixturesfolder", "downloadsfolder",
   "screenshotsfolder", "videosfolder", "fileserverfolder", "setupnodeevents", "projectid",
@@ -28,6 +28,7 @@ const githubRef = z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LEN
   .regex(/^[A-Za-z0-9_./-]+$/);
 const githubWorkflow = z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH)
   .regex(/^[A-Za-z0-9_.-]+\.ya?ml$/);
+const inheritedGithubRepositoryPart = githubRepositoryPart.or(z.literal(""));
 
 export const githubIntegrationSchema = z.object({
   token: optionalSecret,
@@ -94,6 +95,17 @@ export const launchProfileMappingSchema = z.object({
   profileId: z.string().uuid(),
 }).strict();
 
+export const launchSourceMappingSchema = z.object({
+  pattern: z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH),
+  owner: inheritedGithubRepositoryPart.default(""),
+  repository: inheritedGithubRepositoryPart.default(""),
+  ref: githubRef,
+}).strict().superRefine((mapping, context) => {
+  if (Boolean(mapping.owner) !== Boolean(mapping.repository)) {
+    context.addIssue({ code: "custom", message: "Source owner and repository must both be set or both inherit the GitHub default" });
+  }
+});
+
 export const dashboardSettingsInputSchema = z.object({
   reportPortalApiUrl: httpsUrl,
   reportPortalApiKey: optionalSecret,
@@ -107,6 +119,7 @@ export const dashboardSettingsInputSchema = z.object({
   reportFields: z.array(reportFieldMappingSchema).max(VALIDATION_LIMITS.REPORT_FIELDS).default([]),
   cypressConfigFields: z.array(cypressConfigFieldSchema).max(VALIDATION_LIMITS.CYPRESS_CONFIG_FIELDS).default([]),
   launchProfileMappings: z.array(launchProfileMappingSchema).max(VALIDATION_LIMITS.PROFILE_MAPPINGS).default([]),
+  launchSourceMappings: z.array(launchSourceMappingSchema).max(VALIDATION_LIMITS.SOURCE_MAPPINGS).default([]),
 }).strict().superRefine((settings, context) => {
   for (const [path, values] of [
     ["reportFields", settings.reportFields.map(({ key }) => key.toLowerCase())],
@@ -152,6 +165,7 @@ export type GitHubIntegrationInput = z.infer<typeof githubIntegrationSchema>;
 export type ReportFieldMapping = z.infer<typeof reportFieldMappingSchema>;
 export type CypressConfigField = z.infer<typeof cypressConfigFieldSchema>;
 export type LaunchProfileMapping = z.infer<typeof launchProfileMappingSchema>;
+export type LaunchSourceMapping = z.infer<typeof launchSourceMappingSchema>;
 export type CypressProfileInput = z.infer<typeof cypressProfileInputSchema>;
 export type CypressProfileVariableInput = z.infer<typeof cypressProfileVariableSchema>;
 

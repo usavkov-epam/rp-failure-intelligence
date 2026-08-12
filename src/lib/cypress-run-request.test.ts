@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { cypressRunRequestSchema } from "./cypress-run-request";
 
 const validRequest = {
+  launchName: "Nightly Eureka",
   specs: ["cypress/e2e/invoices/example.cy.js"],
   runs: 5,
   threads: 2,
@@ -27,6 +28,7 @@ describe("cypressRunRequestSchema", () => {
       ...validRequest,
       cypressConfig: {
         viewportWidth: 1440,
+        custom_option: "enabled",
         viewportHeight: 900,
         retries: 2,
         video: true,
@@ -35,7 +37,7 @@ describe("cypressRunRequestSchema", () => {
 
     expect(result).toMatchObject({
       profileId: validRequest.profileId,
-      cypressConfig: { viewportWidth: 1440, viewportHeight: 900, retries: 2, video: true },
+      cypressConfig: { viewportWidth: 1440, custom_option: "enabled", viewportHeight: 900, retries: 2, video: true },
     });
   });
 

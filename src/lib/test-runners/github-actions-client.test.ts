@@ -9,7 +9,6 @@ const configuration = {
   repository: "example-repository",
   workflow: "run-tests.yml",
   ref: "main",
-  source: { owner: "source-owner", repository: "tests", ref: "develop" },
 };
 
 describe("GitHubActionsClient", () => {
@@ -18,6 +17,7 @@ describe("GitHubActionsClient", () => {
     const client = new GitHubActionsClient(configuration, request as typeof fetch);
 
     await client.dispatch("request-id", {
+      launchName: "Nightly Eureka",
       specs: ["cypress/e2e/example.cy.ts"],
       runs: RUN_DEFAULTS.REPETITIONS,
       threads: RUN_DEFAULTS.THREADS,
@@ -25,7 +25,7 @@ describe("GitHubActionsClient", () => {
       timeoutSeconds: RUN_DEFAULTS.TIMEOUT_SECONDS,
       profileId: "0d697360-d730-4e0c-8a9c-cb4c09f632f1",
       cypressConfig: { video: false },
-    }, "developer", "https://dashboard.example.org");
+    }, "developer", "https://dashboard.example.org", { owner: "source-owner", repository: "tests", ref: "develop" });
 
     expect(request).toHaveBeenCalledOnce();
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];

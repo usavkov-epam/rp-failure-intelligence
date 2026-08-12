@@ -22,5 +22,6 @@ export function dashboardSettingsFormValue(
     reportFields: settings?.reportFields ?? defaults.reportFields,
     cypressConfigFields: settings?.cypressConfigFields ?? defaults.cypressConfigFields,
     launchProfileMappings: settings?.launchProfileMappings ?? defaults.launchProfileMappings,
+    launchSourceMappings: settings?.launchSourceMappings ?? defaults.launchSourceMappings,
   };
 }

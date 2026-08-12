@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ACTIVE_PROJECT_COOKIE } from "@/lib/active-project";
 import { config } from "@/lib/config";
-import { resolveLaunchProfileId } from "@/lib/configuration-mappings";
+import { resolveLaunchProfileId, resolveLaunchSourceRepository } from "@/lib/configuration-mappings";
 import { DISPLAY, FORM_VALUE, VALIDATION_LIMITS } from "@/lib/domain-constants";
 import { getDashboardData, resolveReportSelection } from "@/lib/reportportal";
 import { getTestRunner } from "@/lib/test-runners";
@@ -84,7 +84,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     initialData={await getDashboardData(connection, selection, dashboard.settings.reportFields)}
     reportSelection={selection}
     reportSourceOptions={options}
-    sourceRepository={dashboard.settings.github?.source}
+    sourceRepository={dashboard.settings.github ? resolveLaunchSourceRepository(selection.launchName, dashboard.settings.github.source, dashboard.settings.launchSourceMappings) : undefined}
     cypressProfiles={cypressProfiles.map(({ id, name, isDefault }) => ({ id, name, isDefault }))}
     reportFields={dashboard.settings.reportFields}
     cypressConfigFields={dashboard.settings.cypressConfigFields}

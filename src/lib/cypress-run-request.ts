@@ -10,6 +10,7 @@ const specPath = z.string()
 export const cypressConfigOverridesSchema = customCypressConfigSchema;
 
 export const cypressRunRequestSchema = z.object({
+  launchName: z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH),
   specs: z.array(specPath).min(1).max(RUN_LIMITS.MAX_SPECS).transform((specs) => [...new Set(specs)]),
   runs: z.number().int().min(RUN_LIMITS.MIN_REPETITIONS).max(RUN_LIMITS.MAX_REPETITIONS),
   threads: z.number().int().min(RUN_LIMITS.MIN_THREADS).max(RUN_LIMITS.MAX_THREADS),

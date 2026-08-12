@@ -17,6 +17,7 @@ export interface RunDispatchContext {
   request: CypressRunRequest;
   requestedBy: string;
   applicationBaseUrl: string;
+  sourceRepository: { owner: string; repository: string; ref: string };
   profileName: string;
   profile: CypressProfileSecret;
 }

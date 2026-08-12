@@ -1,4 +1,4 @@
-import type { CypressConfigField, LaunchProfileMapping, ReportFieldMapping } from "./user-settings-schema";
+import type { CypressConfigField, GitHubIntegrationInput, LaunchProfileMapping, LaunchSourceMapping, ReportFieldMapping } from "./user-settings-schema";
 
 const CYPRESS_CONFIG_LIMITS = {
   MIN_VIEWPORT: 320,
@@ -68,6 +68,20 @@ export function resolveLaunchProfileId(
   return mappings.find(({ pattern, profileId }) => (
     availableProfileIds.has(profileId) && globExpression(pattern).test(launchName)
   ))?.profileId;
+}
+
+export function resolveLaunchSourceRepository(
+  launchName: string,
+  defaultSource: GitHubIntegrationInput["source"],
+  mappings: LaunchSourceMapping[],
+) {
+  const mapping = mappings.find(({ pattern }) => globExpression(pattern).test(launchName));
+  if (!mapping) return defaultSource;
+  return {
+    owner: mapping.owner || defaultSource.owner,
+    repository: mapping.repository || defaultSource.repository,
+    ref: mapping.ref,
+  };
 }
 
 export function cypressConfigEnvironmentName(key: string) {

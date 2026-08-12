@@ -16,6 +16,7 @@ const defaults = {
   reportFields: legacyReportFields,
   cypressConfigFields: defaultCypressConfigFields,
   launchProfileMappings: [],
+  launchSourceMappings: [],
 } satisfies DashboardSettingsInput;
 
 describe("dashboardSettingsFormValue", () => {

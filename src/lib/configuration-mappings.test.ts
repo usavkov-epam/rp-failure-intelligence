@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   cypressConfigEnvironmentName,
   resolveLaunchProfileId,
+  resolveLaunchSourceRepository,
   validateCypressConfigValues,
 } from "./configuration-mappings";
 
@@ -13,6 +14,25 @@ describe("configuration mappings", () => {
       { pattern: "nightly *", profileId: "00000000-0000-4000-8000-000000000000" },
       { pattern: "*eureka*", profileId: "b8663d08-f48b-4d2d-8a89-4ef82ffae514" },
     ], available)).toBe("b8663d08-f48b-4d2d-8a89-4ef82ffae514");
+  });
+
+  it("overrides a source ref by launch while inheriting the default repository", () => {
+    expect(resolveLaunchSourceRepository(
+      "Nightly Eureka release",
+      { owner: "folio-org", repository: "stripes-testing", ref: "main" },
+      [
+        { pattern: "*eureka*", owner: "", repository: "", ref: "release/eureka" },
+        { pattern: "*", owner: "other", repository: "other-tests", ref: "develop" },
+      ],
+    )).toEqual({ owner: "folio-org", repository: "stripes-testing", ref: "release/eureka" });
+  });
+
+  it("can override the complete source repository for a matching launch", () => {
+    expect(resolveLaunchSourceRepository(
+      "Special suite",
+      { owner: "default", repository: "tests", ref: "main" },
+      [{ pattern: "special *", owner: "team", repository: "release-tests", ref: "v2" }],
+    )).toEqual({ owner: "team", repository: "release-tests", ref: "v2" });
   });
 
   it("validates configured Cypress values and rejects dangerous or unknown keys", () => {

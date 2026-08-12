@@ -76,6 +76,7 @@ function dashboardView(input: DashboardSettingsInput): DashboardSettingsView {
     })),
     cypressConfigFields: input.cypressConfigFields || defaultCypressConfigFields,
     launchProfileMappings: input.launchProfileMappings || [],
+    launchSourceMappings: input.launchSourceMappings || [],
     hasReportPortalApiKey: Boolean(input.reportPortalApiKey),
     hasTestRailApiKey: Boolean(input.testRailApiKey),
     github: input.github ? {

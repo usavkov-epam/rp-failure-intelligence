@@ -14,6 +14,7 @@ const dashboard = {
   reportFields: [{ key: "component", label: "Component", reportPortalParameter: "filter.eq.attributes.component", defaultValue: "ui", required: false }],
   cypressConfigFields: [{ key: "viewportWidth", label: "Viewport width", type: "number", minimum: 320, maximum: 3840 }],
   launchProfileMappings: [{ pattern: "*eureka*", profileId: "bd05cf5b-e26d-4aa7-9d96-f4e647481e13" }],
+  launchSourceMappings: [{ pattern: "*eureka*", owner: "", repository: "", ref: "release/eureka" }],
 } as const;
 
 describe("dashboardSettingsInputSchema", () => {
@@ -42,6 +43,13 @@ describe("dashboardSettingsInputSchema", () => {
         actions: { owner: "example", repository: "runner;invalid", workflow: "script.sh", ref: "main" },
         source: { owner: "example", repository: "tests", ref: "main" },
       },
+    }).success).toBe(false);
+  });
+
+  it("requires source mapping owner and repository overrides together", () => {
+    expect(dashboardSettingsInputSchema.safeParse({
+      ...dashboard,
+      launchSourceMappings: [{ pattern: "*release*", owner: "example", repository: "", ref: "release" }],
     }).success).toBe(false);
   });
 
@@ -81,6 +89,13 @@ describe("dashboardSettingsInputSchema", () => {
       ...dashboard,
       cypressConfigFields: [{ key: "setupNodeEvents", label: "Plugin hook", type: "string" }],
     }).success).toBe(false);
+  });
+
+  it("accepts Cypress configuration keys containing underscores", () => {
+    expect(dashboardSettingsInputSchema.safeParse({
+      ...dashboard,
+      cypressConfigFields: [{ key: "default_command_timeout", label: "Command timeout", type: "number", minimum: 1000 }],
+    }).success).toBe(true);
   });
 
   it("rejects plaintext HTTP integration URLs", () => {

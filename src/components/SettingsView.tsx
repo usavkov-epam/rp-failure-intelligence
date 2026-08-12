@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Activity, CheckCircle2, ChevronRight, CircleAlert, FlaskConical, GitBranch, Loader2, Pencil, Plus, Save, Trash2, type LucideIcon } from "lucide-react";
+import { Activity, CheckCircle2, ChevronRight, CircleAlert, ExternalLink, FlaskConical, GitBranch, Info, Loader2, Pencil, Plus, Save, Trash2, type LucideIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,6 +33,7 @@ const emptyDashboard: DashboardSettingsInput = {
   reportFields: legacyReportFields,
   cypressConfigFields: defaultCypressConfigFields,
   launchProfileMappings: [],
+  launchSourceMappings: [],
 };
 const emptyGitHubIntegration = {
   token: "",
@@ -101,6 +103,14 @@ function IntegrationCard({ icon: Icon, name, description, configured, onClick }:
     <div className="flex w-full items-start justify-between gap-4"><span className="flex size-10 items-center justify-center rounded-lg border bg-background"><Icon className="size-5" /></span><Badge variant={configured ? "secondary" : "outline"}>{configured ? "Connected" : "Not configured"}</Badge></div>
     <div className="mt-4 flex w-full items-end justify-between gap-3"><div><h3 className="font-semibold">{name}</h3><p className="mt-1 text-sm text-muted-foreground">{description}</p></div><ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div>
   </button>;
+}
+
+function IntegrationHelp({ label, children, documentationUrl }: {
+  label: string;
+  children: React.ReactNode;
+  documentationUrl: string;
+}) {
+  return <Popover><PopoverTrigger asChild><Button type="button" variant="ghost" size="icon-xs" aria-label={`How to configure ${label}`}><Info /></Button></PopoverTrigger><PopoverContent align="start" className="w-[min(24rem,calc(100vw-2rem))] space-y-3 text-sm"><div><p className="font-semibold">Where to get these values</p><div className="mt-2 space-y-2 text-muted-foreground">{children}</div></div><Button asChild variant="outline" size="sm"><a href={documentationUrl} target="_blank" rel="noreferrer">Official documentation<ExternalLink /></a></Button></PopoverContent></Popover>;
 }
 
 export default function SettingsView({ initialDashboardSettings, initialCypressProfiles, userName, activeProject, localMode, applicationBaseUrl }: {
@@ -306,6 +316,16 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
                 </CardContent></Card>)}
                 {!profiles.length && <Alert><AlertTitle>No profiles yet</AlertTitle><AlertDescription>Create a Cypress profile before adding mappings.</AlertDescription></Alert>}
               </EditableSection>
+              <EditableSection title="Launch → test source mappings" description="Override the GitHub test-source branch for matching launches. Owner and repository may stay blank to inherit the GitHub integration defaults. First matching glob wins." addLabel="Add source mapping" onAdd={() => setDashboard({ ...dashboard, launchSourceMappings: [...dashboard.launchSourceMappings, { pattern: "*", owner: "", repository: "", ref: "main" }] })}>
+                {dashboard.launchSourceMappings.map((mapping, index) => <Card key={index} className="py-3"><CardContent className="grid items-end gap-3 md:grid-cols-[1.5fr_1fr_1fr_1fr_auto]">
+                  <Field label="Launch pattern"><Input value={mapping.pattern} onChange={(event) => setDashboard({ ...dashboard, launchSourceMappings: dashboard.launchSourceMappings.map((item, itemIndex) => itemIndex === index ? { ...item, pattern: event.target.value } : item) })} /></Field>
+                  <Field label="Owner" description="Blank: inherit"><Input value={mapping.owner} placeholder={dashboard.github?.source.owner || "Default owner"} onChange={(event) => setDashboard({ ...dashboard, launchSourceMappings: dashboard.launchSourceMappings.map((item, itemIndex) => itemIndex === index ? { ...item, owner: event.target.value } : item) })} /></Field>
+                  <Field label="Repository" description="Blank: inherit"><Input value={mapping.repository} placeholder={dashboard.github?.source.repository || "Default repository"} onChange={(event) => setDashboard({ ...dashboard, launchSourceMappings: dashboard.launchSourceMappings.map((item, itemIndex) => itemIndex === index ? { ...item, repository: event.target.value } : item) })} /></Field>
+                  <Field label="Ref / branch"><Input value={mapping.ref} placeholder="release/branch" onChange={(event) => setDashboard({ ...dashboard, launchSourceMappings: dashboard.launchSourceMappings.map((item, itemIndex) => itemIndex === index ? { ...item, ref: event.target.value } : item) })} /></Field>
+                  <Button variant="ghost" size="icon" aria-label="Remove source mapping" onClick={() => setDashboard({ ...dashboard, launchSourceMappings: dashboard.launchSourceMappings.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 /></Button>
+                </CardContent></Card>)}
+                {!dashboard.github && <Alert><AlertTitle>GitHub integration not configured</AlertTitle><AlertDescription>Connect GitHub first to establish the default source repository inherited by these mappings.</AlertDescription></Alert>}
+              </EditableSection>
               <Button onClick={() => void saveDashboard()} disabled={pending}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save configuration</Button>
             </CardContent></Card>
           </TabsContent>
@@ -321,21 +341,21 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
       </main>
 
       <Dialog open={activeIntegration === INTEGRATION.REPORT_PORTAL} onOpenChange={(open) => !pending && !open && closeIntegration()}>
-        <DialogContent><DialogHeader><DialogTitle className="flex items-center gap-2"><Activity className="size-5" />ReportPortal</DialogTitle><DialogDescription>Connect the ReportPortal account used for failure analysis. The API key is encrypted and write-only.</DialogDescription></DialogHeader>
+        <DialogContent><DialogHeader><DialogTitle className="flex items-center gap-2"><Activity className="size-5" />ReportPortal<IntegrationHelp label="ReportPortal" documentationUrl="https://reportportal.io/docs/log-data-in-reportportal/HowToGetAnAccessTokenInReportPortal/"><p><strong className="text-foreground">API URL:</strong> copy your ReportPortal server address and append <code>/api/v1</code>.</p><p><strong className="text-foreground">API key:</strong> open your ReportPortal profile, select <em>API Keys</em>, and generate a named key. Copy it when shown.</p></IntegrationHelp></DialogTitle><DialogDescription>Connect the ReportPortal account used for failure analysis. The API key is encrypted and write-only.</DialogDescription></DialogHeader>
           <div className="space-y-4"><Field label="API URL"><Input value={dashboard.reportPortalApiUrl} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiUrl: event.target.value })} placeholder="https://report-portal.example.org/api/v1" /></Field><StoredSecretField label="API key" configured={hasReportPortalKey} editing={changingReportPortalKey} value={dashboard.reportPortalApiKey || ""} onEditingChange={setChangingReportPortalKey} onChange={(reportPortalApiKey) => setDashboard({ ...dashboard, reportPortalApiKey })} /></div>
           <DialogFooter><Button variant="outline" onClick={closeIntegration} disabled={pending}>Cancel</Button><Button onClick={() => void saveDashboard(true)} disabled={pending || (!hasReportPortalKey && !dashboard.reportPortalApiKey)}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save ReportPortal</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={activeIntegration === INTEGRATION.TEST_RAIL} onOpenChange={(open) => !pending && !open && closeIntegration()}>
-        <DialogContent><DialogHeader><DialogTitle className="flex items-center gap-2"><FlaskConical className="size-5" />TestRail</DialogTitle><DialogDescription>Optionally add links from failed tests to TestRail cases.</DialogDescription></DialogHeader>
+        <DialogContent><DialogHeader><DialogTitle className="flex items-center gap-2"><FlaskConical className="size-5" />TestRail<IntegrationHelp label="TestRail" documentationUrl="https://support.testrail.com/hc/en-us/articles/7077039051284-Accessing-the-TestRail-API"><p><strong className="text-foreground">Base URL:</strong> use the address you open to access TestRail, such as <code>https://company.testrail.io</code>.</p><p><strong className="text-foreground">API user:</strong> enter the email address of the TestRail user that owns the key.</p><p><strong className="text-foreground">API key:</strong> open <em>My Settings → API Keys</em>, add a named key, and copy it when generated.</p></IntegrationHelp></DialogTitle><DialogDescription>Optionally add links from failed tests to TestRail cases.</DialogDescription></DialogHeader>
           <div className="space-y-4"><Field label="Base URL"><Input value={dashboard.testRailBaseUrl || ""} onChange={(event) => setDashboard({ ...dashboard, testRailBaseUrl: event.target.value })} placeholder="https://company.testrail.io" /></Field><Field label="API user"><Input value={dashboard.testRailApiUser || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiUser: event.target.value })} /></Field><StoredSecretField label="API key" configured={hasTestRailKey} editing={changingTestRailKey} value={dashboard.testRailApiKey || ""} optional onEditingChange={setChangingTestRailKey} onChange={(testRailApiKey) => setDashboard({ ...dashboard, testRailApiKey })} /></div>
           <DialogFooter><Button variant="outline" onClick={closeIntegration} disabled={pending}>Cancel</Button><Button onClick={() => void saveDashboard(true)} disabled={pending}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save TestRail</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={activeIntegration === INTEGRATION.GITHUB} onOpenChange={(open) => !pending && !open && closeIntegration()}>
-        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle className="flex items-center gap-2"><GitBranch className="size-5" />GitHub</DialogTitle><DialogDescription>{localMode ? "Configure where source links should open. Local runs continue to use the repository mounted for the local runner." : "Choose the repository and workflow that execute Cypress, plus the repository containing the test source."}</DialogDescription></DialogHeader>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle className="flex items-center gap-2"><GitBranch className="size-5" />GitHub<IntegrationHelp label="GitHub" documentationUrl="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens"><p><strong className="text-foreground">Token:</strong> open GitHub <em>Settings → Developer settings → Personal access tokens → Fine-grained tokens</em>. Select only the Actions repository and grant <em>Actions: read and write</em>.</p><p><strong className="text-foreground">Webhook secret:</strong> generate a random value of at least 32 characters. Add a <em>workflow_run</em> webhook in the Actions repository and use the same value.</p><p><strong className="text-foreground">Actions repository:</strong> identify the repository, workflow YAML filename, and branch used to dispatch Cypress.</p><p><strong className="text-foreground">Test source:</strong> identify the repository and default branch containing the Cypress specs. Launch mappings can override this default.</p></IntegrationHelp></DialogTitle><DialogDescription>{localMode ? "Configure where source links should open. Local runs continue to use the repository mounted for the local runner." : "Choose the repository and workflow that execute Cypress, plus the repository containing the test source."}</DialogDescription></DialogHeader>
           <div className="space-y-6">
             {!localMode && <><section className="space-y-4"><div><h3 className="font-semibold">Authentication</h3><p className="text-xs text-muted-foreground">Use a fine-grained token with Actions read/write access to the Actions repository.</p></div><StoredSecretField label="Personal access token" configured={hasGitHubToken} editing={changingGitHubToken} value={github.token || ""} onEditingChange={setChangingGitHubToken} onChange={(token) => updateGitHub((integration) => ({ ...integration, token }))} /><StoredSecretField label="Webhook secret (32+ characters)" configured={hasGitHubWebhookSecret} editing={changingGitHubWebhookSecret} value={github.webhookSecret || ""} onEditingChange={setChangingGitHubWebhookSecret} onChange={(webhookSecret) => updateGitHub((integration) => ({ ...integration, webhookSecret }))} /><Alert><AlertTitle>Webhook endpoint</AlertTitle><AlertDescription className="space-y-1"><span className="block">Subscribe a GitHub webhook to the <code>workflow_run</code> event and use the same secret entered above.</span><code className="block break-all">{applicationBaseUrl}/api/webhooks/github</code></AlertDescription></Alert></section>
             <section className="space-y-4"><div><h3 className="font-semibold">Actions repository</h3><p className="text-xs text-muted-foreground">The workflow must accept the dashboard&apos;s workflow_dispatch inputs.</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Owner"><Input value={github.actions.owner} onChange={(event) => updateGitHub((integration) => ({ ...integration, actions: { ...integration.actions, owner: event.target.value } }))} /></Field><Field label="Repository"><Input value={github.actions.repository} onChange={(event) => updateGitHub((integration) => ({ ...integration, actions: { ...integration.actions, repository: event.target.value } }))} /></Field><Field label="Workflow file"><Input value={github.actions.workflow} onChange={(event) => updateGitHub((integration) => ({ ...integration, actions: { ...integration.actions, workflow: event.target.value } }))} /></Field><Field label="Ref"><Input value={github.actions.ref} onChange={(event) => updateGitHub((integration) => ({ ...integration, actions: { ...integration.actions, ref: event.target.value } }))} /></Field></div></section></>}

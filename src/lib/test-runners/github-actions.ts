@@ -8,7 +8,7 @@ import { GitHubActionsClient } from "./github-actions-client";
 async function clientFor(ownerKey: string) {
   const integration = await getGitHubIntegration(ownerKey);
   if (!integration?.token) throw new Error("Configure GitHub in Settings before starting a run");
-  return new GitHubActionsClient({ ...integration.actions, source: integration.source, token: integration.token });
+  return new GitHubActionsClient({ ...integration.actions, token: integration.token });
 }
 
 export const githubActionsRunner: TestRunner = {
@@ -24,7 +24,7 @@ export const githubActionsRunner: TestRunner = {
   },
   async dispatch(context) {
     await createRunProfileSnapshot(context.requestId, { name: context.profileName, environment: context.profile });
-    await (await clientFor(context.ownerKey)).dispatch(context.requestId, context.request, context.requestedBy, context.applicationBaseUrl);
+    await (await clientFor(context.ownerKey)).dispatch(context.requestId, context.request, context.requestedBy, context.applicationBaseUrl, context.sourceRepository);
   },
   async reconcile() {
     return false;

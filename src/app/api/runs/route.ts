@@ -3,12 +3,12 @@ import { NextResponse } from "next/server";
 import { getAuthorizedSession } from "@/auth";
 import { cypressRunRequestSchema } from "@/lib/cypress-run-request";
 import { config } from "@/lib/config";
-import { validateCypressConfigValues } from "@/lib/configuration-mappings";
+import { resolveLaunchSourceRepository, validateCypressConfigValues } from "@/lib/configuration-mappings";
 import { HTTP_STATUS } from "@/lib/domain-constants";
 import { createCypressRun, failCypressRunDispatch, listCypressRuns } from "@/lib/cypress-run-store";
 import { getTestRunner } from "@/lib/test-runners";
 import { getRequestedBy, getUserOwnerKey } from "@/lib/user-identity";
-import { getCypressProfileSecret, getDashboardSettings } from "@/lib/user-settings";
+import { getCypressProfileSecret, getDashboardSettings, getGitHubIntegration } from "@/lib/user-settings";
 
 export async function GET() {
   const session = await getAuthorizedSession();
@@ -40,14 +40,21 @@ export async function POST(request: Request) {
   const ownerKey = getUserOwnerKey(session);
   const runner = getTestRunner();
   try {
-    const [selectedProfile, dashboardSettings] = await Promise.all([
+    const [selectedProfile, dashboardSettings, githubIntegration] = await Promise.all([
       getCypressProfileSecret(ownerKey, parsed.data.profileId),
       getDashboardSettings(ownerKey),
+      getGitHubIntegration(ownerKey),
     ]);
     if (!selectedProfile) return NextResponse.json({ error: "Cypress profile was not found" }, { status: HTTP_STATUS.NOT_FOUND });
     if (!dashboardSettings || !validateCypressConfigValues(parsed.data.cypressConfig, dashboardSettings.cypressConfigFields)) {
       return NextResponse.json({ error: "Cypress configuration contains an unknown or invalid value" }, { status: HTTP_STATUS.BAD_REQUEST });
     }
+    if (!config.isLocal && !githubIntegration) {
+      return NextResponse.json({ error: "GitHub integration is not configured" }, { status: HTTP_STATUS.BAD_REQUEST });
+    }
+    const sourceRepository = githubIntegration
+      ? resolveLaunchSourceRepository(parsed.data.launchName, githubIntegration.source, dashboardSettings.launchSourceMappings)
+      : { owner: "", repository: "", ref: "" };
     const runUrl = await runner.initialRunUrl(ownerKey);
     const run = await createCypressRun(requestId, ownerKey, requestedBy, parsed.data, runUrl, {
       id: selectedProfile.profile.id,
@@ -59,6 +66,7 @@ export async function POST(request: Request) {
       request: parsed.data,
       requestedBy,
       applicationBaseUrl: config.applicationBaseUrl,
+      sourceRepository,
       profileName: selectedProfile.profile.name,
       profile: selectedProfile.environment,
     });

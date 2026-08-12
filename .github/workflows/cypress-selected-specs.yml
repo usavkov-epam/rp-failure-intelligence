@@ -118,7 +118,7 @@ jobs:
           const blocked = new Set(['baseurl', 'env', 'specpattern', 'supportfile', 'fixturesfolder', 'downloadsfolder', 'screenshotsfolder', 'videosfolder', 'fileserverfolder', 'setupnodeevents', 'projectid']);
           if (entries.length > 30) throw new Error('Too many Cypress configuration values');
           for (const [key, value] of entries) {
-            if (!/^[a-z][A-Za-z0-9]{0,99}$/.test(key) || blocked.has(key.toLowerCase())) throw new Error(`Unsupported Cypress configuration: ${key}`);
+            if (!/^[a-z][A-Za-z0-9_]{0,99}$/.test(key) || blocked.has(key.toLowerCase())) throw new Error(`Unsupported Cypress configuration: ${key}`);
             if (!['string', 'number', 'boolean'].includes(typeof value) || (typeof value === 'number' && !Number.isFinite(value)) || (typeof value === 'string' && (value.length > 500 || /[\r\n]/.test(value)))) {
               throw new Error(`Invalid Cypress configuration: ${key}`);
             }
