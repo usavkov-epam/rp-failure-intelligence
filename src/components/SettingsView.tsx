@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2, CircleAlert, Loader2, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { Activity, CheckCircle2, ChevronRight, CircleAlert, FlaskConical, GitBranch, Loader2, Pencil, Plus, Save, Trash2, type LucideIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { defaultCypressConfigFields, legacyReportFields } from "@/lib/configuration-mappings";
 import { dashboardSettingsFormValue } from "@/lib/dashboard-settings-form";
 import { HTTP_STATUS } from "@/lib/domain-constants";
-import type { CypressProfileInput, CypressProfileView, DashboardSettingsInput, DashboardSettingsView } from "@/lib/user-settings-schema";
+import type { CypressProfileInput, CypressProfileView, DashboardSettingsInput, DashboardSettingsView, GitHubIntegrationInput } from "@/lib/user-settings-schema";
 import AppHeader from "./AppHeader";
 
 const emptyDashboard: DashboardSettingsInput = {
@@ -33,6 +33,18 @@ const emptyDashboard: DashboardSettingsInput = {
   cypressConfigFields: defaultCypressConfigFields,
   launchProfileMappings: [],
 };
+const emptyGitHubIntegration = {
+  token: "",
+  webhookSecret: "",
+  actions: { owner: "", repository: "", workflow: "cypress-selected-specs.yml", ref: "main" },
+  source: { owner: "", repository: "", ref: "main" },
+};
+const INTEGRATION = {
+  REPORT_PORTAL: "reportportal",
+  TEST_RAIL: "testrail",
+  GITHUB: "github",
+} as const;
+type IntegrationId = typeof INTEGRATION[keyof typeof INTEGRATION];
 const emptyProfile: CypressProfileInput = { name: "", baseUrl: "", variables: [], isDefault: false };
 interface ReportDefaultsOptions { projects: string[]; launches: string[] }
 
@@ -78,14 +90,29 @@ function EditableSection({ title, description, addLabel, onAdd, children }: { ti
   return <section className="space-y-3"><div><h3 className="text-lg font-semibold">{title}</h3><p className="text-sm text-muted-foreground">{description}</p></div>{children}<Button variant="outline" size="sm" onClick={onAdd}><Plus />{addLabel}</Button></section>;
 }
 
-export default function SettingsView({ initialDashboardSettings, initialCypressProfiles, userName, activeProject, localMode }: {
+function IntegrationCard({ icon: Icon, name, description, configured, onClick }: {
+  icon: LucideIcon;
+  name: string;
+  description: string;
+  configured: boolean;
+  onClick: () => void;
+}) {
+  return <button type="button" onClick={onClick} className="group flex min-h-36 w-full flex-col rounded-xl border bg-card p-5 text-left shadow-sm transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <div className="flex w-full items-start justify-between gap-4"><span className="flex size-10 items-center justify-center rounded-lg border bg-background"><Icon className="size-5" /></span><Badge variant={configured ? "secondary" : "outline"}>{configured ? "Connected" : "Not configured"}</Badge></div>
+    <div className="mt-4 flex w-full items-end justify-between gap-3"><div><h3 className="font-semibold">{name}</h3><p className="mt-1 text-sm text-muted-foreground">{description}</p></div><ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div>
+  </button>;
+}
+
+export default function SettingsView({ initialDashboardSettings, initialCypressProfiles, userName, activeProject, localMode, applicationBaseUrl }: {
   initialDashboardSettings: DashboardSettingsView | null;
   initialCypressProfiles: CypressProfileView[];
   userName: string;
   activeProject?: string;
   localMode?: boolean;
+  applicationBaseUrl: string;
 }) {
   const [dashboard, setDashboard] = useState<DashboardSettingsInput>(() => dashboardSettingsFormValue(initialDashboardSettings, emptyDashboard));
+  const [savedDashboard, setSavedDashboard] = useState<DashboardSettingsInput>(() => dashboardSettingsFormValue(initialDashboardSettings, emptyDashboard));
   const [profiles, setProfiles] = useState(initialCypressProfiles);
   const [profile, setProfile] = useState<CypressProfileInput>(emptyProfile);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -97,6 +124,11 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
   const [hasTestRailKey, setHasTestRailKey] = useState(Boolean(initialDashboardSettings?.hasTestRailApiKey));
   const [changingReportPortalKey, setChangingReportPortalKey] = useState(!initialDashboardSettings?.hasReportPortalApiKey);
   const [changingTestRailKey, setChangingTestRailKey] = useState(!initialDashboardSettings?.hasTestRailApiKey);
+  const [hasGitHubToken, setHasGitHubToken] = useState(Boolean(initialDashboardSettings?.github?.hasToken));
+  const [hasGitHubWebhookSecret, setHasGitHubWebhookSecret] = useState(Boolean(initialDashboardSettings?.github?.hasWebhookSecret));
+  const [changingGitHubToken, setChangingGitHubToken] = useState(!initialDashboardSettings?.github?.hasToken);
+  const [changingGitHubWebhookSecret, setChangingGitHubWebhookSecret] = useState(!initialDashboardSettings?.github?.hasWebhookSecret);
+  const [activeIntegration, setActiveIntegration] = useState<IntegrationId | null>(null);
   const [reportOptions, setReportOptions] = useState<ReportDefaultsOptions>({ projects: [], launches: [] });
   const [reportOptionsLoading, setReportOptionsLoading] = useState(false);
   const [reportOptionsError, setReportOptionsError] = useState("");
@@ -164,20 +196,53 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
     setProfile(existing ? { name: existing.name, baseUrl: existing.baseUrl, isDefault: existing.isDefault, variables: existing.variables.map(({ key, type, value, secret }) => ({ key, type, value, secret })) } : emptyProfile);
     setProfileOpen(true);
   };
-  const saveDashboard = async () => {
+  const updateGitHub = (update: (integration: GitHubIntegrationInput) => GitHubIntegrationInput) => {
+    setDashboard((current) => ({ ...current, github: update(current.github || emptyGitHubIntegration) }));
+  };
+  const closeIntegration = () => {
+    if (activeIntegration === INTEGRATION.REPORT_PORTAL) {
+      setDashboard((current) => ({ ...current, reportPortalApiUrl: savedDashboard.reportPortalApiUrl, reportPortalApiKey: "" }));
+      setChangingReportPortalKey(!hasReportPortalKey);
+    } else if (activeIntegration === INTEGRATION.TEST_RAIL) {
+      setDashboard((current) => ({ ...current, testRailBaseUrl: savedDashboard.testRailBaseUrl, testRailApiUser: savedDashboard.testRailApiUser, testRailApiKey: "" }));
+      setChangingTestRailKey(!hasTestRailKey);
+    } else if (activeIntegration === INTEGRATION.GITHUB) {
+      setDashboard((current) => ({ ...current, github: savedDashboard.github }));
+      setChangingGitHubToken(!hasGitHubToken);
+      setChangingGitHubWebhookSecret(!hasGitHubWebhookSecret);
+    }
+    setActiveIntegration(null);
+  };
+  const saveDashboard = async (closeIntegration = false) => {
     setPending(true); setError("");
     try {
       const result = await jsonRequest<{ settings: DashboardSettingsView }>("/api/settings/dashboard", { method: "PUT", body: JSON.stringify(dashboard) });
-      setDashboard(dashboardSettingsFormValue(result.settings, emptyDashboard));
+      const formValue = dashboardSettingsFormValue(result.settings, emptyDashboard);
+      setDashboard(formValue);
+      setSavedDashboard(formValue);
       setHasReportPortalKey(result.settings.hasReportPortalApiKey);
       setHasTestRailKey(result.settings.hasTestRailApiKey);
       setChangingReportPortalKey(!result.settings.hasReportPortalApiKey);
       setChangingTestRailKey(!result.settings.hasTestRailApiKey);
+      setHasGitHubToken(Boolean(result.settings.github?.hasToken));
+      setHasGitHubWebhookSecret(Boolean(result.settings.github?.hasWebhookSecret));
+      setChangingGitHubToken(!result.settings.github?.hasToken);
+      setChangingGitHubWebhookSecret(!result.settings.github?.hasWebhookSecret);
       if (result.settings.hasReportPortalApiKey) void loadReportDefaults(result.settings.defaultProject, result.settings.defaultLaunchName);
       setMessage("Settings saved securely.");
+      if (closeIntegration) setActiveIntegration(null);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save settings"); }
     finally { setPending(false); }
   };
+  const github = dashboard.github || emptyGitHubIntegration;
+  const githubRepositoryConfigured = Boolean(
+    github.source.owner && github.source.repository && github.source.ref
+    && (localMode || (github.actions.owner && github.actions.repository && github.actions.workflow && github.actions.ref)),
+  );
+  const githubSecretsConfigured = localMode || (
+    (hasGitHubToken || Boolean(github.token))
+    && (hasGitHubWebhookSecret || Boolean(github.webhookSecret))
+  );
 
   return (
     <>
@@ -190,17 +255,10 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
           <TabsList className="mb-4"><TabsTrigger value="integrations">Integrations</TabsTrigger><TabsTrigger value="configuration">Configuration & mappings</TabsTrigger><TabsTrigger value="profiles">Cypress profiles</TabsTrigger></TabsList>
 
           <TabsContent value="integrations">
-            <Card><CardHeader><CardTitle>Integrations</CardTitle><CardDescription>{localMode ? "Credentials are encrypted at rest in the persistent local Docker volume." : "Credentials are scoped to your account and encrypted before they are stored in DynamoDB."}</CardDescription></CardHeader><CardContent className="space-y-6">
-              <section className="space-y-4"><div><h3 className="text-lg font-semibold">ReportPortal</h3></div>
-                <Field label="ReportPortal API URL"><Input value={dashboard.reportPortalApiUrl} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiUrl: event.target.value })} /></Field>
-                <StoredSecretField label="ReportPortal API key" configured={hasReportPortalKey} editing={changingReportPortalKey} value={dashboard.reportPortalApiKey || ""} onEditingChange={setChangingReportPortalKey} onChange={(reportPortalApiKey) => setDashboard({ ...dashboard, reportPortalApiKey })} />
-              </section>
-              <section className="space-y-4"><div><h3 className="text-lg font-semibold">TestRail <span className="font-normal text-muted-foreground">(optional)</span></h3></div>
-                <Field label="TestRail base URL"><Input value={dashboard.testRailBaseUrl || ""} onChange={(event) => setDashboard({ ...dashboard, testRailBaseUrl: event.target.value })} /></Field>
-                <Field label="TestRail API user"><Input value={dashboard.testRailApiUser || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiUser: event.target.value })} /></Field>
-                <StoredSecretField label="TestRail API key" configured={hasTestRailKey} editing={changingTestRailKey} value={dashboard.testRailApiKey || ""} optional onEditingChange={setChangingTestRailKey} onChange={(testRailApiKey) => setDashboard({ ...dashboard, testRailApiKey })} />
-              </section>
-              <Button onClick={saveDashboard} disabled={pending}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save integrations</Button>
+            <Card><CardHeader><CardTitle>Integrations</CardTitle><CardDescription>{localMode ? "Credentials are encrypted at rest in the persistent local Docker volume." : "Credentials are scoped to your account and encrypted before they are stored in DynamoDB."} Select an integration to view or change its configuration.</CardDescription></CardHeader><CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <IntegrationCard icon={Activity} name="ReportPortal" description="Failure results, launch history, and projects." configured={hasReportPortalKey} onClick={() => setActiveIntegration(INTEGRATION.REPORT_PORTAL)} />
+              <IntegrationCard icon={FlaskConical} name="TestRail" description="Optional test-case links and metadata." configured={hasTestRailKey} onClick={() => setActiveIntegration(INTEGRATION.TEST_RAIL)} />
+              <IntegrationCard icon={GitBranch} name="GitHub" description={localMode ? "Source repository links for local runs." : "Actions runner, workflow updates, and test source."} configured={localMode ? Boolean(dashboard.github?.source.owner && dashboard.github.source.repository) : hasGitHubToken && hasGitHubWebhookSecret} onClick={() => setActiveIntegration(INTEGRATION.GITHUB)} />
             </CardContent></Card>
           </TabsContent>
 
@@ -248,7 +306,7 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
                 </CardContent></Card>)}
                 {!profiles.length && <Alert><AlertTitle>No profiles yet</AlertTitle><AlertDescription>Create a Cypress profile before adding mappings.</AlertDescription></Alert>}
               </EditableSection>
-              <Button onClick={saveDashboard} disabled={pending}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save configuration</Button>
+              <Button onClick={() => void saveDashboard()} disabled={pending}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save configuration</Button>
             </CardContent></Card>
           </TabsContent>
 
@@ -261,6 +319,31 @@ export default function SettingsView({ initialDashboardSettings, initialCypressP
           </TabsContent>
         </Tabs>
       </main>
+
+      <Dialog open={activeIntegration === INTEGRATION.REPORT_PORTAL} onOpenChange={(open) => !pending && !open && closeIntegration()}>
+        <DialogContent><DialogHeader><DialogTitle className="flex items-center gap-2"><Activity className="size-5" />ReportPortal</DialogTitle><DialogDescription>Connect the ReportPortal account used for failure analysis. The API key is encrypted and write-only.</DialogDescription></DialogHeader>
+          <div className="space-y-4"><Field label="API URL"><Input value={dashboard.reportPortalApiUrl} onChange={(event) => setDashboard({ ...dashboard, reportPortalApiUrl: event.target.value })} placeholder="https://report-portal.example.org/api/v1" /></Field><StoredSecretField label="API key" configured={hasReportPortalKey} editing={changingReportPortalKey} value={dashboard.reportPortalApiKey || ""} onEditingChange={setChangingReportPortalKey} onChange={(reportPortalApiKey) => setDashboard({ ...dashboard, reportPortalApiKey })} /></div>
+          <DialogFooter><Button variant="outline" onClick={closeIntegration} disabled={pending}>Cancel</Button><Button onClick={() => void saveDashboard(true)} disabled={pending || (!hasReportPortalKey && !dashboard.reportPortalApiKey)}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save ReportPortal</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={activeIntegration === INTEGRATION.TEST_RAIL} onOpenChange={(open) => !pending && !open && closeIntegration()}>
+        <DialogContent><DialogHeader><DialogTitle className="flex items-center gap-2"><FlaskConical className="size-5" />TestRail</DialogTitle><DialogDescription>Optionally add links from failed tests to TestRail cases.</DialogDescription></DialogHeader>
+          <div className="space-y-4"><Field label="Base URL"><Input value={dashboard.testRailBaseUrl || ""} onChange={(event) => setDashboard({ ...dashboard, testRailBaseUrl: event.target.value })} placeholder="https://company.testrail.io" /></Field><Field label="API user"><Input value={dashboard.testRailApiUser || ""} onChange={(event) => setDashboard({ ...dashboard, testRailApiUser: event.target.value })} /></Field><StoredSecretField label="API key" configured={hasTestRailKey} editing={changingTestRailKey} value={dashboard.testRailApiKey || ""} optional onEditingChange={setChangingTestRailKey} onChange={(testRailApiKey) => setDashboard({ ...dashboard, testRailApiKey })} /></div>
+          <DialogFooter><Button variant="outline" onClick={closeIntegration} disabled={pending}>Cancel</Button><Button onClick={() => void saveDashboard(true)} disabled={pending}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save TestRail</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={activeIntegration === INTEGRATION.GITHUB} onOpenChange={(open) => !pending && !open && closeIntegration()}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle className="flex items-center gap-2"><GitBranch className="size-5" />GitHub</DialogTitle><DialogDescription>{localMode ? "Configure where source links should open. Local runs continue to use the repository mounted for the local runner." : "Choose the repository and workflow that execute Cypress, plus the repository containing the test source."}</DialogDescription></DialogHeader>
+          <div className="space-y-6">
+            {!localMode && <><section className="space-y-4"><div><h3 className="font-semibold">Authentication</h3><p className="text-xs text-muted-foreground">Use a fine-grained token with Actions read/write access to the Actions repository.</p></div><StoredSecretField label="Personal access token" configured={hasGitHubToken} editing={changingGitHubToken} value={github.token || ""} onEditingChange={setChangingGitHubToken} onChange={(token) => updateGitHub((integration) => ({ ...integration, token }))} /><StoredSecretField label="Webhook secret (32+ characters)" configured={hasGitHubWebhookSecret} editing={changingGitHubWebhookSecret} value={github.webhookSecret || ""} onEditingChange={setChangingGitHubWebhookSecret} onChange={(webhookSecret) => updateGitHub((integration) => ({ ...integration, webhookSecret }))} /><Alert><AlertTitle>Webhook endpoint</AlertTitle><AlertDescription className="space-y-1"><span className="block">Subscribe a GitHub webhook to the <code>workflow_run</code> event and use the same secret entered above.</span><code className="block break-all">{applicationBaseUrl}/api/webhooks/github</code></AlertDescription></Alert></section>
+            <section className="space-y-4"><div><h3 className="font-semibold">Actions repository</h3><p className="text-xs text-muted-foreground">The workflow must accept the dashboard&apos;s workflow_dispatch inputs.</p></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Owner"><Input value={github.actions.owner} onChange={(event) => updateGitHub((integration) => ({ ...integration, actions: { ...integration.actions, owner: event.target.value } }))} /></Field><Field label="Repository"><Input value={github.actions.repository} onChange={(event) => updateGitHub((integration) => ({ ...integration, actions: { ...integration.actions, repository: event.target.value } }))} /></Field><Field label="Workflow file"><Input value={github.actions.workflow} onChange={(event) => updateGitHub((integration) => ({ ...integration, actions: { ...integration.actions, workflow: event.target.value } }))} /></Field><Field label="Ref"><Input value={github.actions.ref} onChange={(event) => updateGitHub((integration) => ({ ...integration, actions: { ...integration.actions, ref: event.target.value } }))} /></Field></div></section></>}
+            <section className="space-y-4"><div><h3 className="font-semibold">Test source repository</h3><p className="text-xs text-muted-foreground">Used to open selected Cypress specs from the failure table.</p></div><div className="grid gap-4 sm:grid-cols-3"><Field label="Owner"><Input value={github.source.owner} onChange={(event) => updateGitHub((integration) => ({ ...integration, source: { ...integration.source, owner: event.target.value } }))} /></Field><Field label="Repository"><Input value={github.source.repository} onChange={(event) => updateGitHub((integration) => ({ ...integration, source: { ...integration.source, repository: event.target.value } }))} /></Field><Field label="Ref"><Input value={github.source.ref} onChange={(event) => updateGitHub((integration) => ({ ...integration, source: { ...integration.source, ref: event.target.value } }))} /></Field></div></section>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={closeIntegration} disabled={pending}>Cancel</Button><Button onClick={() => void saveDashboard(true)} disabled={pending || !githubRepositoryConfigured || !githubSecretsConfigured}>{pending ? <Loader2 className="animate-spin" /> : <Save />}Save GitHub</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={profileOpen} onOpenChange={(open) => !pending && setProfileOpen(open)}>
         <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl"><DialogHeader><DialogTitle>{editingId ? "Edit Cypress profile" : "Add Cypress profile"}</DialogTitle><DialogDescription>Values are used to produce the environment override selected by a run.</DialogDescription></DialogHeader>

@@ -12,6 +12,10 @@ on:
         description: GitHub login that requested the run
         required: true
         type: string
+      dashboard_base_url:
+        description: Failure Intelligence application origin
+        required: true
+        type: string
       specs:
         description: JSON array of Cypress spec paths
         required: true
@@ -37,6 +41,18 @@ on:
         required: false
         default: "{}"
         type: string
+      source_owner:
+        description: GitHub owner containing the Cypress test source
+        required: true
+        type: string
+      source_repository:
+        description: GitHub repository containing the Cypress test source
+        required: true
+        type: string
+      source_ref:
+        description: Branch, tag, or commit containing the Cypress test source
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -59,15 +75,17 @@ jobs:
       DASHBOARD_CYPRESS_CONFIG_JSON: ${{ inputs.cypress_config }}
       REQUEST_ID: ${{ inputs.request_id }}
       REQUESTED_BY: ${{ inputs.requested_by }}
-      STRIPES_TESTING_REF: master
-      DASHBOARD_BASE_URL: ${{ vars.DASHBOARD_BASE_URL }}
+      SOURCE_OWNER: ${{ inputs.source_owner }}
+      SOURCE_REPOSITORY: ${{ inputs.source_repository }}
+      SOURCE_REF: ${{ inputs.source_ref }}
+      DASHBOARD_BASE_URL: ${{ inputs.dashboard_base_url }}
       NO_COLOR: "1"
     steps:
-      - name: Check out stripes-testing
+      - name: Check out Cypress test source
         uses: actions/checkout@v4
         with:
-          repository: folio-org/stripes-testing
-          ref: ${{ env.STRIPES_TESTING_REF }}
+          repository: ${{ env.SOURCE_OWNER }}/${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ env.SOURCE_REF }}
 
       - uses: actions/setup-node@v4
         with:

@@ -21,6 +21,30 @@ describe("dashboardSettingsInputSchema", () => {
     expect(dashboardSettingsInputSchema.safeParse(dashboard).success).toBe(true);
   });
 
+  it("accepts independent GitHub Actions and source repositories", () => {
+    expect(dashboardSettingsInputSchema.safeParse({
+      ...dashboard,
+      github: {
+        token: "github-token",
+        webhookSecret: "a-secure-webhook-secret-with-32-chars",
+        actions: { owner: "example", repository: "runner", workflow: "cypress.yml", ref: "main" },
+        source: { owner: "example-tests", repository: "cypress-suite", ref: "release/2026.08" },
+      },
+    }).success).toBe(true);
+  });
+
+  it("rejects invalid GitHub workflow names and repository values", () => {
+    expect(dashboardSettingsInputSchema.safeParse({
+      ...dashboard,
+      github: {
+        token: "github-token",
+        webhookSecret: "a-secure-webhook-secret-with-32-chars",
+        actions: { owner: "example", repository: "runner;invalid", workflow: "script.sh", ref: "main" },
+        source: { owner: "example", repository: "tests", ref: "main" },
+      },
+    }).success).toBe(false);
+  });
+
   it("rejects unsafe ReportPortal parameters and duplicate field keys", () => {
     expect(dashboardSettingsInputSchema.safeParse({
       ...dashboard,

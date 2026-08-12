@@ -78,6 +78,12 @@ function dashboardView(input: DashboardSettingsInput): DashboardSettingsView {
     launchProfileMappings: input.launchProfileMappings || [],
     hasReportPortalApiKey: Boolean(input.reportPortalApiKey),
     hasTestRailApiKey: Boolean(input.testRailApiKey),
+    github: input.github ? {
+      actions: input.github.actions,
+      source: input.github.source,
+      hasToken: Boolean(input.github.token),
+      hasWebhookSecret: Boolean(input.github.webhookSecret),
+    } : undefined,
   };
 }
 
@@ -119,6 +125,18 @@ export async function getDashboardConnection(ownerKey: string) {
   };
 }
 
+/** Returns decrypted GitHub configuration only to server-side integration adapters. */
+export async function getGitHubIntegration(ownerKey: string) {
+  let stored: DashboardSettingsInput | null | undefined;
+  if (config.isLocal) {
+    const dashboard = (await readLocalStore()).dashboard;
+    stored = dashboard?.ownerKey === ownerKey ? dashboard.settings : null;
+  } else {
+    stored = await readHostedDashboard(ownerKey);
+  }
+  return stored?.github || null;
+}
+
 function mergeDashboardSettings(input: DashboardSettingsInput, previous?: DashboardSettingsInput): DashboardSettingsInput {
   const merged = {
     ...input,
@@ -127,8 +145,16 @@ function mergeDashboardSettings(input: DashboardSettingsInput, previous?: Dashbo
     reportPortalApiKey: input.reportPortalApiKey || previous?.reportPortalApiKey || "",
     testRailApiKey: input.testRailApiKey || previous?.testRailApiKey,
     testRailApiUser: input.testRailApiUser || previous?.testRailApiUser,
+    github: input.github ? {
+      ...input.github,
+      token: input.github.token || previous?.github?.token,
+      webhookSecret: input.github.webhookSecret || previous?.github?.webhookSecret,
+    } : previous?.github,
   };
-  if (!merged.reportPortalApiKey) throw new Error("ReportPortal API key is required");
+  if (merged.github && !config.isLocal && !merged.github.token) throw new Error("GitHub token is required in hosted mode");
+  if (merged.github && !config.isLocal && !merged.github.webhookSecret) {
+    throw new Error("GitHub webhook secret is required in hosted mode");
+  }
   return merged;
 }
 

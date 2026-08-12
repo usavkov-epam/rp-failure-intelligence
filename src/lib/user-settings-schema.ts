@@ -3,6 +3,10 @@ import { z } from "zod";
 import { DISPLAY, VALIDATION_LIMITS } from "./domain-constants";
 
 const optionalSecret = z.string().max(VALIDATION_LIMITS.API_SECRET_LENGTH).optional();
+const optionalWebhookSecret = optionalSecret.refine(
+  (value) => !value || value.length >= VALIDATION_LIMITS.WEBHOOK_SECRET_MIN_LENGTH,
+  "Webhook secret must contain at least 32 characters",
+);
 const httpsUrl = z.string().url().max(VALIDATION_LIMITS.URL_LENGTH).refine((value) => value.startsWith("https://"), "HTTPS URL required");
 const identifier = z.string().trim().min(1).max(VALIDATION_LIMITS.IDENTIFIER_LENGTH).regex(/^[A-Za-z][A-Za-z0-9_-]*$/);
 const environmentKey = z.string().trim().min(1).max(VALIDATION_LIMITS.KEY_LENGTH).regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
@@ -17,6 +21,29 @@ const primitiveValue = z.union([
   z.number().finite(),
   z.boolean(),
 ]);
+
+const githubRepositoryPart = z.string().trim().min(1).max(VALIDATION_LIMITS.IDENTIFIER_LENGTH)
+  .regex(/^[A-Za-z0-9_.-]+$/);
+const githubRef = z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH)
+  .regex(/^[A-Za-z0-9_./-]+$/);
+const githubWorkflow = z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH)
+  .regex(/^[A-Za-z0-9_.-]+\.ya?ml$/);
+
+export const githubIntegrationSchema = z.object({
+  token: optionalSecret,
+  webhookSecret: optionalWebhookSecret,
+  actions: z.object({
+    owner: githubRepositoryPart,
+    repository: githubRepositoryPart,
+    workflow: githubWorkflow,
+    ref: githubRef,
+  }).strict(),
+  source: z.object({
+    owner: githubRepositoryPart,
+    repository: githubRepositoryPart,
+    ref: githubRef,
+  }).strict(),
+}).strict();
 
 export const reportFieldMappingSchema = z.object({
   key: identifier,
@@ -73,6 +100,7 @@ export const dashboardSettingsInputSchema = z.object({
   testRailBaseUrl: httpsUrl.optional().or(z.literal("")),
   testRailApiUser: z.string().trim().max(VALIDATION_LIMITS.EMAIL_LENGTH).optional(),
   testRailApiKey: optionalSecret,
+  github: githubIntegrationSchema.optional(),
   defaultProject: z.string().trim().min(1).max(VALIDATION_LIMITS.KEY_LENGTH),
   defaultLaunchName: z.string().trim().min(1).max(VALIDATION_LIMITS.FIELD_VALUE_LENGTH),
   defaultHistoryDepth: z.number().int().min(1).max(Math.max(...DISPLAY.HISTORY_DEPTH_OPTIONS)),
@@ -120,16 +148,21 @@ export const customCypressConfigSchema = z.record(cypressConfigKey, primitiveVal
   .refine((value) => Object.keys(value).length <= VALIDATION_LIMITS.CYPRESS_CONFIG_FIELDS, "Too many Cypress configuration values");
 
 export type DashboardSettingsInput = z.infer<typeof dashboardSettingsInputSchema>;
+export type GitHubIntegrationInput = z.infer<typeof githubIntegrationSchema>;
 export type ReportFieldMapping = z.infer<typeof reportFieldMappingSchema>;
 export type CypressConfigField = z.infer<typeof cypressConfigFieldSchema>;
 export type LaunchProfileMapping = z.infer<typeof launchProfileMappingSchema>;
 export type CypressProfileInput = z.infer<typeof cypressProfileInputSchema>;
 export type CypressProfileVariableInput = z.infer<typeof cypressProfileVariableSchema>;
 
-export interface DashboardSettingsView extends Omit<DashboardSettingsInput, "reportPortalApiKey" | "testRailApiKey"> {
+export interface DashboardSettingsView extends Omit<DashboardSettingsInput, "reportPortalApiKey" | "testRailApiKey" | "github"> {
   configured: boolean;
   hasReportPortalApiKey: boolean;
   hasTestRailApiKey: boolean;
+  github?: Omit<GitHubIntegrationInput, "token" | "webhookSecret"> & {
+    hasToken: boolean;
+    hasWebhookSecret: boolean;
+  };
 }
 
 export interface CypressProfileVariableView extends Omit<CypressProfileVariableInput, "value"> {

@@ -12,9 +12,11 @@ export interface TestRunnerDescriptor {
 }
 
 export interface RunDispatchContext {
+  ownerKey: string;
   requestId: string;
   request: CypressRunRequest;
   requestedBy: string;
+  applicationBaseUrl: string;
   profileName: string;
   profile: CypressProfileSecret;
 }
@@ -31,7 +33,7 @@ export type CancellationResult = typeof CANCELLATION_RESULT[keyof typeof CANCELL
  */
 export interface TestRunner {
   readonly descriptor: TestRunnerDescriptor;
-  initialRunUrl(): string;
+  initialRunUrl(ownerKey: string): Promise<string>;
   dispatch(context: RunDispatchContext): Promise<void>;
   reconcile(runs: CypressRunRecord[]): Promise<boolean>;
   getDetails(ownerKey: string, run: CypressRunRecord): Promise<CypressRunDetails | null>;

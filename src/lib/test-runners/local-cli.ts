@@ -15,7 +15,7 @@ export const localCliRunner: TestRunner = {
     supportsCancellation: true,
     hasExternalRunPage: false,
   },
-  initialRunUrl: () => "/runs",
+  initialRunUrl: async () => "/runs",
   async dispatch(context) {
     const { enqueueLocalCypressRun } = await import("../local-cypress-runner");
     enqueueLocalCypressRun(context.requestId, context.request, context.profileName, context.profile);

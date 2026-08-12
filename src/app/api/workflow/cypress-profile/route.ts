@@ -3,8 +3,9 @@ import { z } from "zod";
 
 import { verifyGitHubActionsIdentity } from "@/lib/github-actions-oidc";
 import { config } from "@/lib/config";
+import { getCypressRunOwnerKey } from "@/lib/cypress-run-store";
 import { AUTHORIZATION, HTTP_HEADER, HTTP_STATUS } from "@/lib/domain-constants";
-import { consumeRunProfileSnapshot } from "@/lib/user-settings";
+import { consumeRunProfileSnapshot, getGitHubIntegration } from "@/lib/user-settings";
 
 const querySchema = z.string().uuid();
 
@@ -14,14 +15,16 @@ export async function GET(request: Request) {
   if (!authorization?.startsWith(AUTHORIZATION.BEARER_PREFIX)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: HTTP_STATUS.UNAUTHORIZED });
   }
-  try {
-    await verifyGitHubActionsIdentity(authorization.slice(AUTHORIZATION.BEARER_PREFIX.length));
-  } catch {
-    return NextResponse.json({ error: "Unauthorized" }, { status: HTTP_STATUS.UNAUTHORIZED });
-  }
   const parsed = querySchema.safeParse(new URL(request.url).searchParams.get("requestId"));
   if (!parsed.success) return NextResponse.json({ error: "Invalid request" }, { status: HTTP_STATUS.BAD_REQUEST });
   try {
+    const ownerKey = await getCypressRunOwnerKey(parsed.data);
+    const github = ownerKey ? await getGitHubIntegration(ownerKey) : null;
+    if (!github) return NextResponse.json({ error: "Unauthorized" }, { status: HTTP_STATUS.UNAUTHORIZED });
+    await verifyGitHubActionsIdentity(
+      authorization.slice(AUTHORIZATION.BEARER_PREFIX.length),
+      github.actions,
+    );
     const profile = await consumeRunProfileSnapshot(parsed.data);
     if (!profile) return NextResponse.json({ error: "Profile unavailable or expired" }, { status: HTTP_STATUS.NOT_FOUND });
     return NextResponse.json(profile, { headers: { "Cache-Control": "no-store" } });

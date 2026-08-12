@@ -95,6 +95,7 @@ Hosted runtime:
 | Variable | Secret | Purpose |
 | --- | --- | --- |
 | `APP_MODE=hosted` | No | Enables authenticated hosted behavior |
+| `APP_BASE_URL` | No | Canonical application origin outside Vercel; Vercel supplies its production URL automatically |
 | `AUTH_SECRET` | Yes | Auth.js encryption/signing secret |
 | `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET` | Yes | GitHub OAuth App |
 | `AUTHORIZATION_MODE`, allowlist | No | Organization or explicit-user admission |
@@ -103,8 +104,8 @@ Hosted runtime:
 | `AWS_ROLE_ARN` | No | Vercel OIDC-assumable application role |
 | `DATA_ENCRYPTION_KEY` | Yes | Application-level record encryption, minimum 32 characters |
 | `WEB_PUSH_PUBLIC_KEY` | No | VAPID public key |
-| `GITHUB_ACTIONS_TOKEN` | Yes | Workflow dispatch/details access |
-| `GITHUB_WEBHOOK_SECRET` | Yes | Signed workflow webhook validation |
+
+ReportPortal, TestRail, GitHub Actions, GitHub source, webhook, and Cypress-profile settings are owner-scoped application integrations. Their secrets are encrypted before persistence and are never deployment environment variables or returned to the browser.
 
 CDK deployment variables are documented in `docs/AWS_INFRASTRUCTURE.md`. Local Docker variables and persistence are documented in `docs/LOCAL_DOCKER.md`.
 

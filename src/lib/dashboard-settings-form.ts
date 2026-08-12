@@ -10,6 +10,12 @@ export function dashboardSettingsFormValue(
     testRailBaseUrl: settings?.testRailBaseUrl ?? defaults.testRailBaseUrl,
     testRailApiUser: settings?.testRailApiUser ?? defaults.testRailApiUser,
     testRailApiKey: "",
+    github: settings?.github ? {
+      actions: settings.github.actions,
+      source: settings.github.source,
+      token: "",
+      webhookSecret: "",
+    } : defaults.github,
     defaultProject: settings?.defaultProject ?? defaults.defaultProject,
     defaultLaunchName: settings?.defaultLaunchName ?? defaults.defaultLaunchName,
     defaultHistoryDepth: settings?.defaultHistoryDepth ?? defaults.defaultHistoryDepth,

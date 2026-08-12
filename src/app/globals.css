@@ -25,8 +25,6 @@ body {
   box-sizing: border-box;
 }
 
-a { color: inherit; }
-
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);

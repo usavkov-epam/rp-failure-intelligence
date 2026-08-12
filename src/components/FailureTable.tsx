@@ -41,7 +41,7 @@ function RecentRuns({ row }: { row: FailureRow }) {
 export default function FailureTable({ rows, historyDepth, sourceRepository, onSelectedSpecs }: {
   rows: FailureRow[];
   historyDepth: number;
-  sourceRepository: { owner: string; repository: string; ref: string };
+  sourceRepository?: { owner: string; repository: string; ref: string };
   onSelectedSpecs: (specs: string[]) => void;
 }) {
   const [sorting, setSorting] = useState<SortingState>([{ id: "failureRate", desc: true }]);
@@ -56,7 +56,7 @@ export default function FailureTable({ rows, historyDepth, sourceRepository, onS
     { accessorKey: "currentStreak", header: "Streak" },
     { accessorKey: "transitions", header: "Transitions" },
     { accessorKey: "defect", header: "Classification" },
-    { id: "links", header: "Links", enableSorting: false, cell: ({ row }) => <div className="flex"><Tooltip><TooltipTrigger asChild><Button asChild variant="ghost" size="icon-sm"><Link href={`https://github.com/${sourceRepository.owner}/${sourceRepository.repository}/blob/${sourceRepository.ref}/${row.original.specPath}`} target="_blank" aria-label="Open source spec"><Clipboard /></Link></Button></TooltipTrigger><TooltipContent>Open source spec</TooltipContent></Tooltip><Tooltip><TooltipTrigger asChild><Button asChild variant="ghost" size="icon-sm"><Link href={row.original.reportPortalUrl} target="_blank" aria-label="Open ReportPortal log"><ExternalLink /></Link></Button></TooltipTrigger><TooltipContent>Open ReportPortal log</TooltipContent></Tooltip>{row.original.testRailUrl && <Tooltip><TooltipTrigger asChild><Button asChild variant="ghost" size="icon-sm"><Link href={row.original.testRailUrl} target="_blank" aria-label="Open TestRail case"><FlaskConical /></Link></Button></TooltipTrigger><TooltipContent>Open TestRail case</TooltipContent></Tooltip>}</div> },
+    { id: "links", header: "Links", enableSorting: false, cell: ({ row }) => <div className="flex">{sourceRepository && <Tooltip><TooltipTrigger asChild><Button asChild variant="ghost" size="icon-sm"><Link href={`https://github.com/${sourceRepository.owner}/${sourceRepository.repository}/blob/${sourceRepository.ref}/${row.original.specPath}`} target="_blank" aria-label="Open source spec"><Clipboard /></Link></Button></TooltipTrigger><TooltipContent>Open source spec</TooltipContent></Tooltip>}<Tooltip><TooltipTrigger asChild><Button asChild variant="ghost" size="icon-sm"><Link href={row.original.reportPortalUrl} target="_blank" aria-label="Open ReportPortal log"><ExternalLink /></Link></Button></TooltipTrigger><TooltipContent>Open ReportPortal log</TooltipContent></Tooltip>{row.original.testRailUrl && <Tooltip><TooltipTrigger asChild><Button asChild variant="ghost" size="icon-sm"><Link href={row.original.testRailUrl} target="_blank" aria-label="Open TestRail case"><FlaskConical /></Link></Button></TooltipTrigger><TooltipContent>Open TestRail case</TooltipContent></Tooltip>}</div> },
   ], [historyDepth, sourceRepository]);
   // TanStack Table is the headless engine recommended by shadcn; React Compiler intentionally skips this hook.
   // eslint-disable-next-line react-hooks/incompatible-library

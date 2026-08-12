@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getAuthorizedSession } from "@/auth";
 import { cypressRunRequestSchema } from "@/lib/cypress-run-request";
+import { config } from "@/lib/config";
 import { validateCypressConfigValues } from "@/lib/configuration-mappings";
 import { HTTP_STATUS } from "@/lib/domain-constants";
 import { createCypressRun, failCypressRunDispatch, listCypressRuns } from "@/lib/cypress-run-store";
@@ -38,7 +39,6 @@ export async function POST(request: Request) {
   const requestedBy = getRequestedBy(session);
   const ownerKey = getUserOwnerKey(session);
   const runner = getTestRunner();
-  const runUrl = runner.initialRunUrl();
   try {
     const [selectedProfile, dashboardSettings] = await Promise.all([
       getCypressProfileSecret(ownerKey, parsed.data.profileId),
@@ -48,14 +48,17 @@ export async function POST(request: Request) {
     if (!dashboardSettings || !validateCypressConfigValues(parsed.data.cypressConfig, dashboardSettings.cypressConfigFields)) {
       return NextResponse.json({ error: "Cypress configuration contains an unknown or invalid value" }, { status: HTTP_STATUS.BAD_REQUEST });
     }
+    const runUrl = await runner.initialRunUrl(ownerKey);
     const run = await createCypressRun(requestId, ownerKey, requestedBy, parsed.data, runUrl, {
       id: selectedProfile.profile.id,
       name: selectedProfile.profile.name,
     });
     await runner.dispatch({
+      ownerKey,
       requestId,
       request: parsed.data,
       requestedBy,
+      applicationBaseUrl: config.applicationBaseUrl,
       profileName: selectedProfile.profile.name,
       profile: selectedProfile.environment,
     });

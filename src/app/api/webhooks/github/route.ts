@@ -1,32 +1,33 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
 import { config } from "@/lib/config";
-import { updateCypressRun } from "@/lib/cypress-run-store";
+import { getCypressRunOwnerKey, updateCypressRun } from "@/lib/cypress-run-store";
 import { AUTHORIZATION, GITHUB, HTTP_HEADER, HTTP_STATUS, RUN_STATUS } from "@/lib/domain-constants";
-import { githubActionsClient } from "@/lib/test-runners/github-actions";
+import { getGitHubActionsClient } from "@/lib/test-runners/github-actions";
 import type { CypressRunState } from "@/lib/types";
+import { getGitHubIntegration } from "@/lib/user-settings";
 
-interface WorkflowRunPayload {
-  action: string;
-  repository: { full_name: string };
-  workflow_run: {
-    id: number;
-    run_number: number;
-    display_title: string;
-    path: string;
-    status: string;
-    conclusion: string | null;
-    html_url: string;
-    run_started_at: string | null;
-    updated_at: string;
-  };
-}
+const workflowRunPayloadSchema = z.object({
+  action: z.string(),
+  repository: z.object({ full_name: z.string() }),
+  workflow_run: z.object({
+    id: z.number().int().positive(),
+    run_number: z.number().int().positive(),
+    display_title: z.string(),
+    path: z.string(),
+    status: z.string(),
+    conclusion: z.string().nullable(),
+    html_url: z.string().url(),
+    run_started_at: z.string().nullable(),
+    updated_at: z.string(),
+  }),
+});
 
 const requestIdPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
 
-function hasValidSignature(body: string, signature: string | null) {
-  const secret = config.githubWebhook.secret;
+function hasValidSignature(body: string, signature: string | null, secret: string | undefined) {
   if (!secret || !signature?.startsWith(AUTHORIZATION.SHA256_SIGNATURE_PREFIX)) return false;
   const expected = `${AUTHORIZATION.SHA256_SIGNATURE_PREFIX}${createHmac("sha256", secret).update(body).digest("hex")}`;
   const providedBuffer = Buffer.from(signature);
@@ -40,30 +41,40 @@ function normalizeStatus(status: string): CypressRunState {
   return RUN_STATUS.QUEUED;
 }
 
+function parseJson(body: string): unknown {
+  try { return JSON.parse(body); } catch { return null; }
+}
+
 export async function POST(request: Request) {
   if (config.isLocal) return NextResponse.json({ error: "Not found" }, { status: HTTP_STATUS.NOT_FOUND });
   const body = await request.text();
-  if (!hasValidSignature(body, request.headers.get(HTTP_HEADER.GITHUB_SIGNATURE))) {
-    return NextResponse.json({ error: "Invalid webhook signature" }, { status: HTTP_STATUS.UNAUTHORIZED });
-  }
-
   if (request.headers.get(HTTP_HEADER.GITHUB_EVENT) !== GITHUB.ACTIONS_EVENT) {
     return NextResponse.json({ accepted: true, ignored: true });
   }
 
-  const payload = JSON.parse(body) as WorkflowRunPayload;
-  const expectedRepository = `${config.githubActions.owner}/${config.githubActions.repository}`;
+  const parsedPayload = workflowRunPayloadSchema.safeParse(parseJson(body));
+  if (!parsedPayload.success) {
+    return NextResponse.json({ error: "Invalid webhook payload" }, { status: HTTP_STATUS.BAD_REQUEST });
+  }
+  const payload = parsedPayload.data;
   const requestId = payload.workflow_run.display_title.match(requestIdPattern)?.[0];
-  const expectedWorkflowPath = `.github/workflows/${config.githubActions.workflow}`;
-  if (payload.repository.full_name !== expectedRepository || !payload.workflow_run.path.startsWith(expectedWorkflowPath) || !requestId) {
+  if (!requestId) return NextResponse.json({ accepted: true, ignored: true });
+  const ownerKey = await getCypressRunOwnerKey(requestId);
+  const integration = ownerKey ? await getGitHubIntegration(ownerKey) : null;
+  if (!ownerKey || !integration || !hasValidSignature(body, request.headers.get(HTTP_HEADER.GITHUB_SIGNATURE), integration.webhookSecret)) {
+    return NextResponse.json({ error: "Invalid webhook signature" }, { status: HTTP_STATUS.UNAUTHORIZED });
+  }
+  const expectedRepository = `${integration.actions.owner}/${integration.actions.repository}`;
+  const expectedWorkflowPath = `.github/workflows/${integration.actions.workflow}`;
+  if (payload.repository.full_name !== expectedRepository || !payload.workflow_run.path.startsWith(expectedWorkflowPath)) {
     return NextResponse.json({ accepted: true, ignored: true });
   }
 
   const status = normalizeStatus(payload.workflow_run.status);
   const artifactNames = status === RUN_STATUS.COMPLETED
-    ? await githubActionsClient.artifactNames(payload.workflow_run.id)
+    ? await (await getGitHubActionsClient(ownerKey)).artifactNames(payload.workflow_run.id)
     : [];
-  const ownerKey = await updateCypressRun(requestId, {
+  const updatedOwnerKey = await updateCypressRun(requestId, {
     status,
     conclusion: payload.workflow_run.conclusion,
     githubRunId: payload.workflow_run.id,
@@ -74,5 +85,5 @@ export async function POST(request: Request) {
     artifactNames,
   });
 
-  return NextResponse.json({ accepted: true, updated: Boolean(ownerKey) });
+  return NextResponse.json({ accepted: true, updated: Boolean(updatedOwnerKey) });
 }

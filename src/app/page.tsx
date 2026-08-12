@@ -84,12 +84,13 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     initialData={await getDashboardData(connection, selection, dashboard.settings.reportFields)}
     reportSelection={selection}
     reportSourceOptions={options}
-    sourceRepository={config.githubSource}
+    sourceRepository={dashboard.settings.github?.source}
     cypressProfiles={cypressProfiles.map(({ id, name, isDefault }) => ({ id, name, isDefault }))}
     reportFields={dashboard.settings.reportFields}
     cypressConfigFields={dashboard.settings.cypressConfigFields}
     suggestedProfileId={suggestedProfileId}
     runner={getTestRunner().descriptor}
+    runnerConfigured={config.isLocal || Boolean(dashboard.settings.github?.hasToken)}
     localMode={config.isLocal}
     user={{ name: userName }}
   />;

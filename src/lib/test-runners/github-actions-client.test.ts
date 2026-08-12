@@ -9,6 +9,7 @@ const configuration = {
   repository: "example-repository",
   workflow: "run-tests.yml",
   ref: "main",
+  source: { owner: "source-owner", repository: "tests", ref: "develop" },
 };
 
 describe("GitHubActionsClient", () => {
@@ -24,7 +25,7 @@ describe("GitHubActionsClient", () => {
       timeoutSeconds: RUN_DEFAULTS.TIMEOUT_SECONDS,
       profileId: "0d697360-d730-4e0c-8a9c-cb4c09f632f1",
       cypressConfig: { video: false },
-    }, "developer");
+    }, "developer", "https://dashboard.example.org");
 
     expect(request).toHaveBeenCalledOnce();
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
@@ -35,8 +36,12 @@ describe("GitHubActionsClient", () => {
       inputs: {
         request_id: "request-id",
         requested_by: "developer",
+        dashboard_base_url: "https://dashboard.example.org",
         browser: CYPRESS_BROWSER.CHROME,
         cypress_config: JSON.stringify({ video: false }),
+        source_owner: "source-owner",
+        source_repository: "tests",
+        source_ref: "develop",
       },
     });
   });

@@ -8,6 +8,11 @@ interface GitHubActionsConfiguration {
   repository: string;
   workflow: string;
   ref: string;
+  source: {
+    owner: string;
+    repository: string;
+    ref: string;
+  };
 }
 
 interface GitHubArtifact {
@@ -63,7 +68,7 @@ export class GitHubActionsClient {
     return (await response.json() as { artifacts: GitHubArtifact[] }).artifacts;
   }
 
-  async dispatch(requestId: string, run: CypressRunRequest, requestedBy: string) {
+  async dispatch(requestId: string, run: CypressRunRequest, requestedBy: string, applicationBaseUrl: string) {
     const response = await this.request(
       this.apiUrl(`/actions/workflows/${this.configuration.workflow}/dispatches`),
       {
@@ -74,12 +79,16 @@ export class GitHubActionsClient {
           inputs: {
             request_id: requestId,
             requested_by: requestedBy,
+            dashboard_base_url: applicationBaseUrl,
             specs: JSON.stringify(run.specs),
             runs: String(run.runs),
             threads: String(run.threads),
             browser: run.browser,
             timeout_seconds: String(run.timeoutSeconds),
             cypress_config: JSON.stringify(run.cypressConfig),
+            source_owner: this.configuration.source.owner,
+            source_repository: this.configuration.source.repository,
+            source_ref: this.configuration.source.ref,
           },
         }),
         cache: "no-store",

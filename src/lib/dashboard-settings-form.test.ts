@@ -4,7 +4,7 @@ import { defaultCypressConfigFields, legacyReportFields } from "./configuration-
 import { dashboardSettingsFormValue } from "./dashboard-settings-form";
 import { dashboardSettingsInputSchema, type DashboardSettingsInput, type DashboardSettingsView } from "./user-settings-schema";
 
-const defaults: DashboardSettingsInput = {
+const defaults = {
   reportPortalApiUrl: "https://report.example.org/api/v1",
   reportPortalApiKey: "",
   testRailBaseUrl: "",
@@ -16,7 +16,7 @@ const defaults: DashboardSettingsInput = {
   reportFields: legacyReportFields,
   cypressConfigFields: defaultCypressConfigFields,
   launchProfileMappings: [],
-};
+} satisfies DashboardSettingsInput;
 
 describe("dashboardSettingsFormValue", () => {
   it("removes read-only view flags before submitting strict dashboard settings", () => {
@@ -25,6 +25,12 @@ describe("dashboardSettingsFormValue", () => {
       configured: true,
       hasReportPortalApiKey: true,
       hasTestRailApiKey: true,
+      github: {
+        actions: { owner: "example", repository: "runner", workflow: "cypress.yml", ref: "main" },
+        source: { owner: "example", repository: "tests", ref: "develop" },
+        hasToken: true,
+        hasWebhookSecret: true,
+      },
     };
 
     const form = dashboardSettingsFormValue(view, defaults);
@@ -32,6 +38,7 @@ describe("dashboardSettingsFormValue", () => {
     expect(form).not.toHaveProperty("configured");
     expect(form).not.toHaveProperty("hasReportPortalApiKey");
     expect(form).not.toHaveProperty("hasTestRailApiKey");
+    expect(form.github).toMatchObject({ token: "", webhookSecret: "" });
     expect(dashboardSettingsInputSchema.safeParse(form).success).toBe(true);
   });
 });

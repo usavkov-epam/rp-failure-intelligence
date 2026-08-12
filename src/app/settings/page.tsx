@@ -30,5 +30,6 @@ export default async function SettingsPage() {
     userName={session.user.name || session.user.githubLogin || "User"}
     activeProject={activeProject}
     localMode={config.isLocal}
+    applicationBaseUrl={config.applicationBaseUrl}
   />;
 }

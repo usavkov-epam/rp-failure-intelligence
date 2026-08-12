@@ -77,6 +77,11 @@ async function getRunLocation(requestId: string) {
   return result.Item as CypressRunLookupItem | undefined;
 }
 
+export async function getCypressRunOwnerKey(requestId: string) {
+  if (config.isLocal) return (await readLocalStore()).runs.find((run) => run.requestId === requestId)?.ownerKey;
+  return (await getRunLocation(requestId))?.ownerKey;
+}
+
 export async function createCypressRun(
   requestId: string,
   ownerKey: string,

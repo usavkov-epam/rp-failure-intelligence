@@ -110,7 +110,7 @@ DATA_ENCRYPTION_KEY=<new random value of at least 32 characters>
 
 `DATA_ENCRYPTION_KEY` is a server secret. Generate it independently and never put it in CDK output, source control, or browser-visible variables. Vercel automatically supplies its OIDC token; do not add `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY`.
 
-Keep the existing hosted variables for Auth.js, GitHub OAuth, GitHub Actions dispatch, source links, and the GitHub webhook. Remove all old `NEXT_PUBLIC_SUPABASE_*` and `SUPABASE_*` variables.
+Keep the existing hosted variables for Auth.js and GitHub OAuth. GitHub Actions dispatch, source links, and webhook credentials are configured per user in the application. Remove their former deployment variables (`GITHUB_ACTIONS_*`, `GITHUB_SOURCE_*`, and `GITHUB_WEBHOOK_SECRET`) together with all old `NEXT_PUBLIC_SUPABASE_*` and `SUPABASE_*` variables.
 
 ## 7. GitHub webhook
 
@@ -120,7 +120,7 @@ Keep the GitHub App/repository `workflow_run` webhook pointed at:
 https://<application-host>/api/webhooks/github
 ```
 
-Use the same strong value for the webhook configuration and `GITHUB_WEBHOOK_SECRET`. The route writes the run update to DynamoDB. The stream notifier delivers it to browsers, so no polling service or second webhook endpoint is needed.
+For each connected GitHub Actions repository, create a `workflow_run` webhook and enter the same strong secret in that user's GitHub integration dialog. The route resolves the run owner before validating the owner-scoped secret and expected repository/workflow. It writes the run update to DynamoDB, and the stream notifier delivers it to browsers, so no polling service or second webhook endpoint is needed.
 
 ## Cost guardrails
 
