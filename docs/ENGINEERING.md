@@ -8,6 +8,8 @@ Classification values are not interpreted by built-in project rules. Settings ma
 
 Platform preferences are owner-scoped dashboard settings. Selected spec paths copy as a comma-separated list by default; users can switch the clipboard format to one path per line.
 
+Analysis navigation state is browser-session scoped. The latest report-source URL and active table filters are stored in `sessionStorage`, restored when the user returns from Runs or Settings, and cleared at sign-out.
+
 Hosted mode is multi-user and authenticated through GitHub. DynamoDB holds only application configuration and run workflow state. Local mode is single-user, unauthenticated, and stores an encrypted envelope in a Docker volume.
 
 ## Hosted data flow
